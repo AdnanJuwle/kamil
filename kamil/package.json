@@ -1,0 +1,78 @@
+{
+  "name": "kamil",
+  "displayName": "kamil",
+  "description": "Local AI assistant",
+  "version": "0.0.1",
+  "engines": {
+    "vscode": "^1.118.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [],
+  "main": "./out/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "kamil-sidebar",
+          "title": "Kamil",
+          "icon": "$(robot)"
+        }
+      ]
+    },
+    "views": {
+      "kamil-sidebar": [
+        {
+          "type": "webview",
+          "id": "kamil.chatView",
+          "name": "Kamil"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "kamil.askAboutSelection",
+        "title": "Ask Kamil"
+      },
+      {
+        "command": "kamil.openChat",
+        "title": "Kamil: Open Chat"
+      }
+    ],
+    "menus": {
+      "editor/context": [
+        {
+          "command": "kamil.askAboutSelection",
+          "when": "editorHasSelection",
+          "group": "navigation"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "kamil.openChat",
+        "key": "ctrl+shift+k",
+        "mac": "cmd+shift+k"
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "pretest": "npm run compile && npm run lint",
+    "lint": "eslint src",
+    "test": "vscode-test"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.118.0",
+    "@types/mocha": "^10.0.10",
+    "@types/node": "22.x",
+    "typescript-eslint": "^8.56.1",
+    "eslint": "^9.39.3",
+    "typescript": "^5.9.3",
+    "@vscode/test-cli": "^0.0.12",
+    "@vscode/test-electron": "^2.5.2"
+  }
+}
