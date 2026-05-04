@@ -13,7 +13,6 @@ from memory.compressor import compress_messages, should_compress
 from typing import Generator
 import json
 import re
-from core.config import LLAMA_SERVER_URL, EXECUTOR_SERVER_URL, VOICE_SERVER_URL
 from context.religious_indexer import query_religious, is_religious_query
 
 VOICE_HANDOFF_PHRASES = [
@@ -44,11 +43,9 @@ class Orchestrator:
         self.context_enabled = False
         self.council = None
         self._init_council()
-        self.long_term = LongTermMemory()  # Will set embedder after indexer is set
+        self.long_term = LongTermMemory()
         last_project = load_setting("last_project")
         self._last_project = last_project if last_project else None
-        self.voice_client = LlamaClient(base_url=VOICE_SERVER_URL)
-
         self._new_user = is_new_user()
 
     def _init_council(self):
@@ -60,11 +57,9 @@ class Orchestrator:
 
     def _maybe_compress(self):
         if should_compress(self.history):
-            # Compress oldest 8 messages
             to_compress = self.history[:8]
             current_project = self.indexer.current_project if self.indexer else ""
             compress_messages(to_compress, current_project)
-            # Keep only recent messages
             self.history = self.history[8:]
             save_history(self.history)
 
@@ -91,7 +86,6 @@ class Orchestrator:
         try:
             response = self.executor_client.chat(messages, temperature=0.1, max_tokens=500)
         except RuntimeError:
-            # Executor not running — fall back to primary
             response = self.client.chat(
                 [{"role": "system", "content": self.system_prompt},
                  {"role": "user", "content": user_message}],
@@ -132,12 +126,14 @@ class Orchestrator:
         ]
 
         code_keywords = [
-            "function", "class", "method", "file", "folder", "directory", "import",
-            "bug", "error", "implement", "code", "algorithm", "variable", "module",
-            "does it", "how does", "what does", "find", "check", "inspect", "review"
+            "code", "function", "class", "method", "file", "bug", "error",
+            "import", "module", "implement", "write", "fix", "debug",
+            "ekf", "prana", "navigation", "rover", "sensor", "check",
+            ".py", "does it have", "list all", "what methods", "review",
+            "folder", "directory", "variable", "does it", "how does", 
+            "what does", "find", "inspect", "algorithm"
         ]
 
-        # Only classify as code if project is loaded
         if self.context_enabled and self.indexer:
             for kw in code_keywords:
                 if kw in msg:
@@ -149,7 +145,6 @@ class Orchestrator:
         intent = self._classify_intent(user_message)
         system = self.system_prompt
 
-        # Always inject identity and memory
         identity = load_identity()
         threads = get_threads_summary()
         memories = self.long_term.retrieve(user_message, n_results=3)
@@ -178,7 +173,6 @@ class Orchestrator:
         if self._new_user and not self.history:
             system += "\n\nThis is a new user. Introduce yourself briefly and ask their name naturally."
 
-        # Religious context for text chat
         if is_religious_query(user_message):
             religious_results = query_religious(user_message, n_results=3)
             if religious_results:
@@ -188,32 +182,64 @@ class Orchestrator:
                 ])
                 system += f"\n\nRelevant Islamic sources — quote accurately from these, never fabricate verses:\n{context_text}"
 
-        # Only inject code context for code intent
-        context_prefix = ""
-        if intent == "code" and self.context_enabled and self.indexer:
-            results = self.indexer.query(user_message, n_results=6)
-            if results:
-                context_block = "\n\n".join([
-                    f"[{r['metadata']['file_path'].split(chr(92))[-1]} | {r['metadata']['name']}]\n{r['text'][:800]}"
-                    for r in results
-                ])
-                context_prefix = f"Retrieved code context:\n\n{context_block}\n\nUser query: "
+        # Symbol-aware code context
+        if self.context_enabled and self.indexer and self.indexer.current_project:
+            intent = self._classify_intent(user_message)
+            if intent in ("code", "general"):
+                try:
+                    from context.symbol_indexer import get_symbol_index
+                    project_root = self.indexer._get_project_root(
+                        self.indexer.current_project
+                    )
+                    if project_root:
+                        sym_idx = get_symbol_index(
+                            self.indexer.current_project,
+                            project_root
+                        )
+                        if not sym_idx.is_indexed():
+                            print(f"[orchestrator] Indexing symbols for {self.indexer.current_project}...")
+                            sym_idx.index()
+                        context = sym_idx.build_context_for_query(
+                            user_message,
+                            max_tokens=6000
+                        )
+                        if context:
+                            system += f"\n\n## CODE CONTEXT\n{context}"
+                except Exception as e:
+                    print(f"[orchestrator] Symbol context error: {e}")
+                    try:
+                        chunks = self.indexer.embedder.query(
+                            self.indexer.current_project,
+                            user_message,
+                            n_results=5
+                        )
+                        if chunks:
+                            system += "\n\n## CODE CONTEXT (chunks)\n"
+                            for chunk in chunks:
+                                system += f"\n```python\n{chunk['text']}\n```\n"
+                    except Exception:
+                        pass
+
         elif intent == "self":
             system += "\n\nThe user is asking about you or your memory. Answer from your knowledge about the user and your memory system. Do not reference code or project files."
 
         trimmed_history = self.history[-6:] if len(self.history) > 6 else self.history
-        total_chars = len(system) + len(context_prefix) + sum(len(m["content"]) for m in trimmed_history)
+        total_chars = len(system) + sum(len(m["content"]) for m in trimmed_history)
         if total_chars > 20000:
             trimmed_history = self.history[-2:] if len(self.history) > 2 else self.history
 
+        try:
+            from actions.emcp_client import is_available, format_for_prompt
+            from actions.emcp_client import _last_context
+            if is_available() and _last_context:
+                emcp_context = format_for_prompt(_last_context)
+                if emcp_context:
+                    system += f"\n\n{emcp_context}"
+        except Exception:
+            pass
+
         messages = [{"role": "system", "content": system}] + trimmed_history
-        if context_prefix:
-            messages.append({"role": "user", "content": context_prefix + user_message})
-        else:
-            messages.append({"role": "user", "content": user_message})
-        if intent == "self":
-            print(f"DEBUG self intent — memory block: {memory_block[:200]}")
-            print(f"DEBUG memories retrieved: {len(memories)}")
+        messages.append({"role": "user", "content": user_message})
         return messages
 
     def chat_stream(self, user_message: str, temperature: float = DEFAULT_TEMPERATURE, max_tokens: int = DEFAULT_MAX_TOKENS) -> Generator[str, None, None]:
@@ -237,23 +263,35 @@ class Orchestrator:
         return response
 
     def chat_with_actions(self, user_message: str) -> dict:
+        from actions.tools import parse_tool_calls, execute_tool, requires_confirmation, get_tool_schemas
+    
         self._maybe_compress()
         messages = self._build_messages(user_message)
         full_response = self.client.chat(messages)
-        clean_text, actions = parse_actions(full_response)
+    
+        tool_calls = parse_tool_calls(full_response)
+        import re
+        clean_text = re.sub(r'```tool\s*\n.*?\n```', '', full_response, flags=re.DOTALL).strip()
+    
         auto_executed = []
         pending_confirmation = []
-        for action in actions:
-            if requires_confirmation(action):
-                pending_confirmation.append(action)
+    
+        for call in tool_calls:
+            tool_name = call["tool"]
+            params = call.get("params", {})
+        
+            if requires_confirmation(tool_name):
+                pending_confirmation.append(call)
             else:
-                result = execute_action(action)
-                auto_executed.append({"action": action, "result": result})
-                if result.get("success") and action["type"] == "read_file":
-                    clean_text += f"\n\n[Read {action['path']} — {result['lines']} lines]"
+                result = execute_tool(tool_name, params)
+                auto_executed.append({"call": call, "result": result.to_dict()})
+                if result.success and tool_name == "read_file":
+                    clean_text += f"\n\n[Read {params.get('path', '')} — {result.output.get('lines', 0)} lines]"
+    
         self.history.append({"role": "user", "content": user_message})
         self.history.append({"role": "assistant", "content": clean_text})
         save_history(self.history)
+    
         return {
             "response": clean_text,
             "auto_executed": auto_executed,
@@ -272,45 +310,34 @@ class Orchestrator:
             return
 
         if intent == "code" and self.context_enabled and self.indexer:
-            initial_results = self.indexer.query(user_message, n_results=6)
-            initial_context = "\n\n".join([
-                f"[{r['metadata']['file_path'].split(chr(92))[-1]} | {r['metadata']['name']}]\n{r['text'][:400]}"
-                for r in initial_results
-            ]) if initial_results else "No initial context found."
-
-            planning_messages = [
-                {"role": "system", "content": f"""You are a code navigation assistant. Given a question and initial code snippets, identify which specific implementation files need to be read to answer fully.
-
-    Rules:
-    - Only request files you are confident exist based on the context
-    - Prefer implementation files over __init__.py or README files
-    - Maximum 3 files
-    - If initial context is sufficient, return []
-    - Return ONLY a JSON array of absolute Windows paths
-
-    Initial context:
-    {initial_context}"""},
-                {"role": "user", "content": user_message}
-            ]
-
             try:
-                plan_response = self.client.chat(planning_messages, temperature=0.1, max_tokens=300)
-                json_match = re.search(r'\[.*?\]', plan_response, re.DOTALL)
-                files_to_read = json.loads(json_match.group()) if json_match else []
-            except Exception:
-                files_to_read = []
-
-            extra_context_parts = []
-            for path in files_to_read[:3]:
-                result = fs_read_file(path)
-                if result.get('success'):
-                    content = result['content'][:2000]
-                    fname = path.split('\\')[-1]
-                    extra_context_parts.append(f"=== {fname} ===\n{content}")
+                from context.symbol_indexer import get_symbol_index
+                project_root = self.indexer._get_project_root(
+                    self.indexer.current_project
+                )
+                if project_root:
+                    sym_idx = get_symbol_index(
+                        self.indexer.current_project,
+                        project_root
+                    )
+                    if not sym_idx.is_indexed():
+                        print(f"[agentic] Indexing symbols...")
+                        sym_idx.index()
+                    
+                    code_context = sym_idx.build_context_for_query(
+                        user_message,
+                        max_tokens=6000
+                    )
+                    print(f"[agentic] Symbol context: {len(code_context)} chars")
+                else:
+                    code_context = "No project root found."
+            except Exception as e:
+                print(f"[agentic] Symbol context error: {e}")
+                import traceback
+                traceback.print_exc()
+                code_context = "Symbol index unavailable."
 
             system = self.system_prompt
-
-            # Add memory
             identity = load_identity()
             threads = get_threads_summary()
             memories = self.long_term.retrieve(user_message, n_results=2)
@@ -322,19 +349,14 @@ class Orchestrator:
                 memory_text = "\n".join([f"[{m['timestamp'][:10]}] {m['text']}" for m in memories])
                 system += f"\n\nRelevant memories:\n{memory_text}"
 
-            context_block = initial_context
-            if extra_context_parts:
-                context_block += "\n\n--- Files read ---\n\n" + "\n\n".join(extra_context_parts)
-
             trimmed_history = self.history[-4:] if len(self.history) > 4 else self.history
             messages = [{"role": "system", "content": system}] + trimmed_history
             messages.append({
                 "role": "user",
-                "content": f"Codebase context:\n\n{context_block}\n\nQuestion: {user_message}"
+                "content": f"## CODE CONTEXT\n{code_context}\n\nQuestion: {user_message}"
             })
 
         else:
-            # unchanged fallback path
             messages = self._build_messages(user_message)
 
         full_response = self.client.chat(messages)
@@ -362,7 +384,6 @@ class Orchestrator:
 
     def set_project(self, project_name: str, indexer):
         self.enable_context(indexer)
-        # Share the embedder to avoid loading twice
         self.long_term._external_embedder = indexer.embedder
         project_path = f"C:\\Users\\adnan\\Documents\\repos\\{project_name}"
         self.system_prompt = KAMIL_SYSTEM_PROMPT + f"""
@@ -378,23 +399,15 @@ When the user says 'create a file' without specifying location, create it in the
         self.context_enabled = True
 
     def reset(self):
-        # Don't actually reset — just compress and continue
         if len(self.history) > 4:
             current_project = self.indexer.current_project if self.indexer else ""
             compress_messages(self.history, current_project)
         self.history = []
         clear_history()
 
-    # ------------------ Voice‑optimised chat ------------------
     def chat_voice(self, user_message: str) -> Generator[dict, None, None]:
-        """
-        Two‑phase voice response:
-        1. Small model for instant reply (with handoff detection)
-        2. Primary model for complex queries
-        """
         self._maybe_compress()
 
-        # Lightweight context (identity + memory only, no code retrieval)
         identity = load_identity()
         threads = get_threads_summary()
         memories = self.long_term.retrieve(user_message, n_results=2)
@@ -412,29 +425,23 @@ When the user says 'create a file' without specifying location, create it in the
         messages = [{"role": "system", "content": system}] + trimmed_history
         messages.append({"role": "user", "content": user_message})
 
-        # Phase 1 — fast response from small model
         try:
             quick_response = self.voice_client.chat(messages, max_tokens=60, temperature=0.3)
         except RuntimeError:
-            # Voice model not running — go straight to primary
             quick_response = "let me check that for you"
 
         is_handoff = any(phrase in quick_response.lower() for phrase in VOICE_HANDOFF_PHRASES)
 
         if not is_handoff:
-            # Small model answered fully — done
             self.history.append({"role": "user", "content": user_message})
             self.history.append({"role": "assistant", "content": quick_response})
             save_history(self.history)
             yield {"phase": "final", "text": quick_response}
             return
 
-        # Phase 2 — handoff to primary
         yield {"phase": "handoff", "text": quick_response}
 
-        # Build full context for primary model (use _build_messages for code retrieval)
         full_messages = self._build_messages(user_message)
-        # Add voice constraints for spoken response
         full_messages[0]["content"] += "\n\nIMPORTANT: This is a voice response. Keep your answer under 4 sentences. Be direct and spoken — no bullet points, no markdown, no lists."
 
         try:
