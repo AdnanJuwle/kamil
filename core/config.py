@@ -1,7 +1,9 @@
 import os
 
-LLAMA_SERVER_URL = os.getenv("KAMIL_SERVER_URL", "http://127.0.0.1:8080")
 LLAMA_TIMEOUT = int(os.getenv("KAMIL_TIMEOUT", "200"))
+LLAMA_SERVER_URL = os.getenv("KAMIL_SERVER_URL", "http://127.0.0.1:8080")
+VOICE_SERVER_URL = os.getenv("KAMIL_VOICE_URL", "http://127.0.0.1:8084")
+HEAVY_SERVER_URL = os.getenv("KAMIL_HEAVY_URL", "http://127.0.0.1:8085")
 EXECUTOR_SERVER_URL = os.getenv("KAMIL_EXECUTOR_URL", "http://127.0.0.1:8083")
 
 DEFAULT_TEMPERATURE = float(os.getenv("KAMIL_TEMPERATURE", "0.7"))

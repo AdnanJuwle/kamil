@@ -11,14 +11,18 @@ from context.indexer import Indexer
 from actions.dispatcher import execute_action
 from contextlib import asynccontextmanager
 import json
-from piper import PiperVoice
-import wave
-import io
 import base64
 import whisper
 import tempfile
+import re
+import httpx
+from memory.identity import load_identity
+from memory.threads import get_threads_summary
+from memory.store import save_history
+from context.religious_indexer import query_religious, is_religious_query
 
-
+# ------------------------------------------------------------
+# Kokoro TTS
 from kokoro_onnx import Kokoro
 import soundfile as sf
 import numpy as np
@@ -38,15 +42,32 @@ def get_tts():
         print("Kokoro ready")
     return _kokoro
 
-def synthesize_to_wav(text: str) -> bytes:
-    # Fix Kamil pronunciation
+def clean_for_tts(text: str) -> str:
+    """Remove markdown formatting for TTS."""
+    text = re.sub(r'\*\*(.+?)\*\*', r'\1', text)
+    text = re.sub(r'\*(.+?)\*', r'\1', text)
+    text = re.sub(r'#{1,6}\s+', '', text)
+    text = re.sub(r'`{1,3}[^`]*`{1,3}', '', text)
+    text = re.sub(r'\[([^\]]+)\]\([^\)]+\)', r'\1', text)
+    text = re.sub(r'^\s*[-*+]\s+', '', text, flags=re.MULTILINE)
+    text = re.sub(r'^\s*\d+\.\s+', '', text, flags=re.MULTILINE)
+    text = re.sub(r'\n+', ' ', text)
+    text = re.sub(r'\s+', ' ', text).strip()
     text = text.replace("Kamil", "Ka-mil").replace("kamil", "Ka-mil")
+    return text
+
+def synthesize_to_wav(text: str) -> bytes:
+    text = clean_for_tts(text)
+    if not text.strip():
+        return b''
     tts = get_tts()
-    samples, rate = tts.create(text, voice=KAMIL_VOICE, speed=1.0, lang='en-us')
+    samples, rate = tts.create(text, voice=KAMIL_VOICE, speed=1.1, lang='en-us')
     buf = io.BytesIO()
     sf.write(buf, samples, rate, format='WAV')
     buf.seek(0)
     return buf.read()
+# ------------------------------------------------------------
+
 # Whisper model (load once)
 _whisper_model = None
 def get_whisper():
@@ -203,26 +224,7 @@ async def get_identity():
     from memory.identity import load_identity, is_new_user
     return {"identity": load_identity(), "new_user": is_new_user()}
 
-# Voice synthesis (correct definitions)
-VOICE_MODEL_PATH = r"C:\kamil\voices\en_US-amy-medium.onnx"
-_voice = None
-
-def get_voice():
-    global _voice
-    if _voice is None:
-        _voice = PiperVoice.load(VOICE_MODEL_PATH)
-    return _voice
-
-def synthesize_to_wav(text: str) -> bytes:
-    voice = get_voice()
-    audio_buffer = io.BytesIO()
-    with wave.open(audio_buffer, 'wb') as wav_file:
-        wav_file.setnchannels(1)
-        wav_file.setsampwidth(2)
-        wav_file.setframerate(voice.config.sample_rate)
-        voice.synthesize(text, wav_file)
-    audio_buffer.seek(0)
-    return audio_buffer.read()
+# ------------------- Voice endpoints ---------------------
 
 @app.post("/synthesize")
 async def synthesize(message: Message):
@@ -234,16 +236,179 @@ async def synthesize(message: Message):
         traceback.print_exc()
         return {"error": str(e)}
 
+async def quick_voice_response(messages: list[dict]) -> str:
+    try:
+        async with httpx.AsyncClient(timeout=25) as client:
+            res = await client.post(
+                "http://127.0.0.1:8084/v1/chat/completions",
+                json={
+                    "messages": messages,
+                    "max_tokens": 600,
+                    "temperature": 0.3,
+                    "stream": False
+                }
+            )
+            print(f"Voice model status: {res.status_code}")
+            if res.status_code != 200:
+                print(f"Voice model raw: {res.text[:300]}")
+                return ""
+            data = res.json()
+            print(f"Voice model raw finish_reason: {data['choices'][0].get('finish_reason', 'none')}")
+            msg = data["choices"][0]["message"]
+            content = msg.get("content", "").strip()
+
+            # If Gemma E4B got stuck in thinking, extract from reasoning_content
+            if not content:
+                reasoning = msg.get("reasoning_content", "")
+                if reasoning:
+                    lines = [l.strip() for l in reasoning.split('\n') if l.strip()]
+                    skip_markers = [
+                        'draft', 'polish', 'constraint', 'analyze', 'ensure',
+                        'step', '**', '*', 'thinking', 'process'
+                    ]
+                    clean_lines = [l for l in lines if not any(
+                        m in l.lower() for m in skip_markers
+                    )]
+                    content = clean_lines[-1] if clean_lines else "let me check that for you"
+                    print(f"Extracted from reasoning (cleaned): '{content}'")
+                else:
+                    print("Warning: voice model returned empty content and no reasoning_content")
+
+            print(f"Voice model content: '{content}'")
+            return content
+    except Exception as e:
+        print(f"Voice model error: {type(e).__name__}: {e}")
+        return ""
+
 @app.post("/voice_chat")
 async def voice_chat(message: Message):
     try:
-        response_text = kamil.chat(message.content)
-        audio_bytes = synthesize_to_wav(response_text)
+        print(f"voice_chat called: {message.content}")
+        
+        # Phase 1 — quick response from voice model
+        identity = load_identity()
+        threads = get_threads_summary()
+        
+        voice_system = """You are Kamil, a direct personal AI assistant responding via voice.  You have real opinions and you share them directly.
+When asked to pick a side, pick one. When asked your view, give it.
+Never say 'as an AI I cannot'. You are Kamil, not a corporate chatbot. Keep responses under 3 sentences. Natural spoken language only, no markdown.
+
+You can and should share opinions, preferences, and takes on any topic when asked. Be direct and conversational like a knowledgeable friend, not a corporate assistant.
+
+For controversial or sensitive topics: give your honest direct take in 2 sentences maximum. Never hedge endlessly. If you have a view, state it briefly.
+
+If the question requires code analysis, project-specific file knowledge, or multi-step technical reasoning — respond with only: "let me check that for you"
+
+For everything else — answer directly with your honest take."""
+        if identity.get("name"):
+            voice_system += f"\nUser's name: {identity['name']}"
+        if threads:
+            voice_system += f"\nOngoing projects: {threads}"
+            
+        # Inject religious context if relevant
+        if is_religious_query(message.content):
+            religious_results = query_religious(message.content, n_results=3)
+            if religious_results:
+                context_text = "\n\n".join([
+                    f"[{r['source']}, page {r['page']}]\n{r['text'][:400]}"
+                    for r in religious_results
+                ])
+                voice_system += f"\n\nRelevant Islamic sources — quote accurately:\n{context_text}"
+                print(f"Religious context: {len(religious_results)} passages injected")
+
+        # Don't inject history for voice — just system + current message
+        quick_messages = [
+            {"role": "system", "content": voice_system},
+            {"role": "user", "content": f"/no_think {message.content}"}
+        ]
+
+        # Check if this is a follow-up question
+        followup_keywords = [
+            "you said", "what did you mean", "explain that", "what about",
+            "tell me more", "elaborate", "you mentioned", "earlier you",
+            "what do you mean", "nuanced", "clarify"
+        ]
+        is_followup = any(kw in message.content.lower() for kw in followup_keywords)
+
+        # Get quick response from voice model
+        quick_response = await quick_voice_response(quick_messages)
+        if not quick_response:
+            quick_response = "let me check that for you" if not is_followup else ""
+        
+        if is_followup:
+            if not quick_response.strip():
+                simple = [{"role": "user", "content": f"/no_think {message.content}"}]
+                quick_response = await quick_voice_response(simple)
+            if not quick_response.strip():
+                # fallback to primary model, also with /no_think
+                full_messages = kamil._build_messages(message.content)
+                full_messages[0]["content"] += "\n\nVoice response: max 4 sentences, no markdown, no lists, natural spoken language."
+                full_messages[-1]["content"] = "/no_think " + full_messages[-1]["content"]
+                full_response = kamil.client.chat(full_messages, max_tokens=200, temperature=0.7)
+                if not full_response or not full_response.strip():
+                    full_response = "I'm having trouble forming a response on that right now. Try asking again."
+                kamil.history.append({"role": "user", "content": message.content})
+                kamil.history.append({"role": "assistant", "content": full_response})
+                save_history(kamil.history)
+                audio = synthesize_to_wav(full_response)
+                return {
+                    "text": full_response,
+                    "audio": base64.b64encode(audio).decode(),
+                    "format": "wav"
+                }
+            kamil.history.append({"role": "user", "content": message.content})
+            kamil.history.append({"role": "assistant", "content": quick_response})
+            save_history(kamil.history)
+            audio = synthesize_to_wav(quick_response)
+            return {
+                "text": quick_response,
+                "audio": base64.b64encode(audio).decode() if audio else None,
+                "format": "wav"
+            }
+        
+        handoff_phrases = ["let me check", "give me a moment", "one moment", "checking that"]
+        is_handoff = any(p in quick_response.lower() for p in handoff_phrases)
+        
+        if not is_handoff and quick_response.strip():
+            kamil.history.append({"role": "user", "content": message.content})
+            kamil.history.append({"role": "assistant", "content": quick_response})
+            save_history(kamil.history)
+            audio = synthesize_to_wav(quick_response)
+            return {
+                "text": quick_response,
+                "audio": base64.b64encode(audio).decode() if audio else None,
+                "format": "wav"
+            }
+        
+        # Phase 2 — handoff to primary model
+        print("Handing off to primary model...")
+        handoff_text = quick_response if quick_response.strip() else "let me check that for you"
+        handoff_audio = synthesize_to_wav(handoff_text)
+        
+        full_messages = kamil._build_messages(message.content)
+        full_messages[0]["content"] += "\n\nVoice response: max 4 sentences, no markdown, no lists, natural spoken language."
+        full_messages[-1]["content"] = "/no_think " + full_messages[-1]["content"]
+        full_response = kamil.client.chat(full_messages, max_tokens=200, temperature=0.7)
+        
+        # Fallback for empty primary response
+        if not full_response or not full_response.strip():
+            full_response = "I'm having trouble forming a response on that right now. Try asking again."
+            
+        print(f"Primary response: {full_response[:100]}")
+        
+        kamil.history.append({"role": "user", "content": message.content})
+        kamil.history.append({"role": "assistant", "content": full_response})
+        save_history(kamil.history)
+        
+        final_audio = synthesize_to_wav(full_response)
         return {
-            "text": response_text,
-            "audio": base64.b64encode(audio_bytes).decode(),
+            "text": full_response,
+            "audio": base64.b64encode(final_audio).decode(),
+            "handoff_text": handoff_text,
+            "handoff_audio": base64.b64encode(handoff_audio).decode(),
             "format": "wav"
         }
+        
     except Exception as e:
         import traceback
         traceback.print_exc()
@@ -253,14 +418,18 @@ async def voice_chat(message: Message):
 async def transcribe(request: Request):
     try:
         body = await request.body()
+        print(f"Transcribe received {len(body)} bytes")
         with tempfile.NamedTemporaryFile(suffix=".webm", delete=False) as f:
             f.write(body)
             tmp_path = f.name
         model = get_whisper()
-        result = model.transcribe(tmp_path)
+        result = model.transcribe(tmp_path, language="en", task="transcribe", fp16=False)
+        print(f"Transcribe result: '{result['text']}'")
         os.unlink(tmp_path)
         return {"text": result["text"].strip()}
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         return {"error": str(e)}
 
 # SSE generators

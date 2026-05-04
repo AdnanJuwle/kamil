@@ -1,5 +1,9 @@
+# orchestrator.py
 from models.client import LlamaClient
-from core.config import KAMIL_SYSTEM_PROMPT, DEFAULT_TEMPERATURE, DEFAULT_MAX_TOKENS
+from core.config import (
+    KAMIL_SYSTEM_PROMPT, DEFAULT_TEMPERATURE, DEFAULT_MAX_TOKENS,
+    LLAMA_SERVER_URL, EXECUTOR_SERVER_URL, VOICE_SERVER_URL
+)
 from actions.dispatcher import parse_actions, requires_confirmation, execute_action
 from memory.store import save_history, load_history, clear_history, save_setting, load_setting
 from memory.identity import load_identity, is_new_user, update_identity
@@ -9,12 +13,31 @@ from memory.compressor import compress_messages, should_compress
 from typing import Generator
 import json
 import re
-from core.config import LLAMA_SERVER_URL, EXECUTOR_SERVER_URL
+from core.config import LLAMA_SERVER_URL, EXECUTOR_SERVER_URL, VOICE_SERVER_URL
+from context.religious_indexer import query_religious, is_religious_query
+
+VOICE_HANDOFF_PHRASES = [
+    "let me check that for you",
+    "give me a moment",
+    "let me look into that",
+    "one moment",
+    "checking that now",
+]
+
+VOICE_SMALL_SYSTEM = """You are Kamil, a local AI assistant responding via voice. Keep all responses under 3 sentences.
+
+If the question is simple (greetings, basic facts, personal questions, memory questions) — answer directly and completely.
+
+If the question requires deep reasoning, code analysis, project-specific knowledge, or detailed technical explanation — respond with ONLY this exact phrase: "let me check that for you"
+
+Never say anything else as a handoff. Either answer fully or say exactly "let me check that for you"."""
 
 
 class Orchestrator:
     def __init__(self):
-        self.client = LlamaClient()
+        self.client = LlamaClient(base_url=LLAMA_SERVER_URL)
+        self.voice_client = LlamaClient(base_url=VOICE_SERVER_URL)
+        self.executor_client = LlamaClient(base_url=EXECUTOR_SERVER_URL)
         self.history = load_history()
         self.system_prompt = KAMIL_SYSTEM_PROMPT
         self.indexer = None
@@ -24,9 +47,9 @@ class Orchestrator:
         self.long_term = LongTermMemory()  # Will set embedder after indexer is set
         last_project = load_setting("last_project")
         self._last_project = last_project if last_project else None
+        self.voice_client = LlamaClient(base_url=VOICE_SERVER_URL)
+
         self._new_user = is_new_user()
-        self.client = LlamaClient(base_url=LLAMA_SERVER_URL)
-    
 
     def _init_council(self):
         try:
@@ -101,12 +124,6 @@ class Orchestrator:
     def _classify_intent(self, message: str) -> str:
         msg = message.lower()
         
-        """executor_keywords = [
-            'create a file', 'write a file', 'run', 'execute', 'install',
-            'delete', 'move', 'copy', 'make a folder', 'create task',
-            'add task', 'list tasks', 'open', 'launch'
-        ]"""
-
         self_keywords = [
             "do you remember", "what do you know", "what have we discussed",
             "your memory", "can you recall", "what did we", "do you know me",
@@ -119,10 +136,6 @@ class Orchestrator:
             "bug", "error", "implement", "code", "algorithm", "variable", "module",
             "does it", "how does", "what does", "find", "check", "inspect", "review"
         ]
-
-        """for kw in self_keywords:
-            if kw in msg:
-                return "self"""
 
         # Only classify as code if project is loaded
         if self.context_enabled and self.indexer:
@@ -164,6 +177,16 @@ class Orchestrator:
 
         if self._new_user and not self.history:
             system += "\n\nThis is a new user. Introduce yourself briefly and ask their name naturally."
+
+        # Religious context for text chat
+        if is_religious_query(user_message):
+            religious_results = query_religious(user_message, n_results=3)
+            if religious_results:
+                context_text = "\n\n".join([
+                    f"[{r['source']}, page {r['page']}]\n{r['text'][:400]}"
+                    for r in religious_results
+                ])
+                system += f"\n\nRelevant Islamic sources — quote accurately from these, never fabricate verses:\n{context_text}"
 
         # Only inject code context for code intent
         context_prefix = ""
@@ -319,6 +342,7 @@ class Orchestrator:
         self.history.append({"role": "assistant", "content": full_response})
         save_history(self.history)
         yield full_response
+
     def council_chat(self, user_message: str) -> dict:
         if not self.council:
             return {"error": "Council not available"}
@@ -360,3 +384,65 @@ When the user says 'create a file' without specifying location, create it in the
             compress_messages(self.history, current_project)
         self.history = []
         clear_history()
+
+    # ------------------ Voice‑optimised chat ------------------
+    def chat_voice(self, user_message: str) -> Generator[dict, None, None]:
+        """
+        Two‑phase voice response:
+        1. Small model for instant reply (with handoff detection)
+        2. Primary model for complex queries
+        """
+        self._maybe_compress()
+
+        # Lightweight context (identity + memory only, no code retrieval)
+        identity = load_identity()
+        threads = get_threads_summary()
+        memories = self.long_term.retrieve(user_message, n_results=2)
+
+        system = VOICE_SMALL_SYSTEM
+        if identity.get("name"):
+            system += f"\n\nUser's name: {identity['name']}"
+        if threads:
+            system += f"\n\nOngoing projects: {threads}"
+        if memories:
+            memory_text = "\n".join([f"[{m['timestamp'][:10]}] {m['text']}" for m in memories])
+            system += f"\n\nRelevant memories:\n{memory_text}"
+
+        trimmed_history = self.history[-4:] if len(self.history) > 4 else self.history
+        messages = [{"role": "system", "content": system}] + trimmed_history
+        messages.append({"role": "user", "content": user_message})
+
+        # Phase 1 — fast response from small model
+        try:
+            quick_response = self.voice_client.chat(messages, max_tokens=60, temperature=0.3)
+        except RuntimeError:
+            # Voice model not running — go straight to primary
+            quick_response = "let me check that for you"
+
+        is_handoff = any(phrase in quick_response.lower() for phrase in VOICE_HANDOFF_PHRASES)
+
+        if not is_handoff:
+            # Small model answered fully — done
+            self.history.append({"role": "user", "content": user_message})
+            self.history.append({"role": "assistant", "content": quick_response})
+            save_history(self.history)
+            yield {"phase": "final", "text": quick_response}
+            return
+
+        # Phase 2 — handoff to primary
+        yield {"phase": "handoff", "text": quick_response}
+
+        # Build full context for primary model (use _build_messages for code retrieval)
+        full_messages = self._build_messages(user_message)
+        # Add voice constraints for spoken response
+        full_messages[0]["content"] += "\n\nIMPORTANT: This is a voice response. Keep your answer under 4 sentences. Be direct and spoken — no bullet points, no markdown, no lists."
+
+        try:
+            full_response = self.client.chat(full_messages, max_tokens=200, temperature=0.7)
+        except RuntimeError as e:
+            full_response = "Sorry, I couldn't reach the main model right now."
+
+        self.history.append({"role": "user", "content": user_message})
+        self.history.append({"role": "assistant", "content": full_response})
+        save_history(self.history)
+        yield {"phase": "final", "text": full_response}
