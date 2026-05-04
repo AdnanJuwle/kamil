@@ -4,7 +4,27 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Kamil</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500&family=IBM+Plex+Sans:wght@300;400;500&display=swap" rel="stylesheet">
     <style>
+        :root {
+            --bg: #080808;
+            --surface: #0f0f0f;
+            --border: #1c1c1c;
+            --border-hover: #2a2a2a;
+            --text: #d4d4d4;
+            --text-muted: #525252;
+            --text-dim: #333333;
+            --accent: #3b82f6;
+            --accent-dim: #1d3b6e;
+            --user-accent: #404040;
+            --code-bg: #0a0a0a;
+            --input-bg: #111111;
+            --council-accent: #7c3aed;
+            --success: #22c55e;
+            --warning: #f59e0b;
+        }
+
         * {
             margin: 0;
             padding: 0;
@@ -12,459 +32,917 @@
         }
 
         body {
-            background: #0d0d0d;
-            color: #e0e0e0;
-            font-family: 'Segoe UI', system-ui, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            font-family: 'IBM Plex Sans', sans-serif;
+            font-weight: 300;
             height: 100vh;
             display: flex;
             flex-direction: column;
+            overflow: hidden;
+            font-size: 14px;
+            letter-spacing: 0.01em;
         }
 
+        /* Header */
         #header {
-            padding: 12px 24px;
-            border-bottom: 1px solid #1e1e1e;
             display: flex;
             align-items: center;
-            gap: 16px;
+            justify-content: space-between;
+            padding: 0 24px;
+            height: 52px;
+            border-bottom: 1px solid var(--border);
+            flex-shrink: 0;
+            background: var(--bg);
         }
 
-            #header h1 {
-                font-size: 16px;
-                font-weight: 600;
-                letter-spacing: 2px;
-                color: #ffffff;
-                min-width: fit-content;
-            }
+        #header-left {
+            display: flex;
+            align-items: center;
+            gap: 20px;
+        }
+
+        #wordmark {
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: 13px;
+            font-weight: 500;
+            letter-spacing: 0.15em;
+            color: var(--text);
+        }
 
         #project-selector {
             display: flex;
             align-items: center;
             gap: 8px;
-            flex: 1;
         }
 
         #project-select {
-            background: #111;
-            border: 1px solid #222;
-            color: #e0e0e0;
-            padding: 6px 10px;
-            border-radius: 4px;
-            font-size: 12px;
+            background: transparent;
+            border: 1px solid var(--border);
+            color: var(--text-muted);
+            padding: 4px 8px;
+            border-radius: 3px;
+            font-size: 11px;
+            font-family: 'IBM Plex Mono', monospace;
             cursor: pointer;
             outline: none;
+            letter-spacing: 0.05em;
+            transition: border-color 0.15s, color 0.15s;
         }
 
-        #load-project-btn {
-            background: none;
-            border: 1px solid #2a2a4a;
-            color: #4a9eff;
-            padding: 6px 12px;
-            border-radius: 4px;
+            #project-select:hover {
+                border-color: var(--border-hover);
+                color: var(--text);
+            }
+
+        #load-btn {
+            background: transparent;
+            border: 1px solid var(--border);
+            color: var(--text-muted);
+            padding: 4px 10px;
+            border-radius: 3px;
             cursor: pointer;
             font-size: 11px;
-            letter-spacing: 1px;
+            font-family: 'IBM Plex Mono', monospace;
+            letter-spacing: 0.08em;
             transition: all 0.15s;
         }
 
-            #load-project-btn:hover {
-                background: #1a1a2e;
+            #load-btn:hover {
+                border-color: var(--accent);
+                color: var(--accent);
             }
 
-            #load-project-btn:disabled {
-                opacity: 0.4;
+            #load-btn:disabled {
+                opacity: 0.3;
                 cursor: not-allowed;
             }
 
         #project-status {
-            font-size: 11px;
-            color: #444;
-            letter-spacing: 1px;
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: 10px;
+            letter-spacing: 0.1em;
+            color: var(--text-dim);
         }
 
             #project-status.active {
-                color: #4a9eff;
+                color: var(--accent);
             }
 
             #project-status.loading {
-                color: #f0a500;
+                color: var(--warning);
             }
 
+        #header-right {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        #memory-indicator {
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: 10px;
+            letter-spacing: 0.1em;
+            color: var(--text-dim);
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        #memory-dot {
+            width: 5px;
+            height: 5px;
+            border-radius: 50%;
+            background: var(--success);
+            opacity: 0.6;
+        }
+
         #reset-btn {
-            background: none;
-            border: 1px solid #2a2a2a;
-            color: #666;
-            padding: 6px 14px;
-            border-radius: 4px;
+            background: transparent;
+            border: none;
+            color: var(--text-dim);
             cursor: pointer;
             font-size: 11px;
-            letter-spacing: 1px;
-            transition: all 0.15s;
-            margin-left: auto;
+            font-family: 'IBM Plex Mono', monospace;
+            letter-spacing: 0.08em;
+            padding: 4px 8px;
+            border-radius: 3px;
+            transition: color 0.15s;
         }
 
             #reset-btn:hover {
-                border-color: #444;
-                color: #aaa;
+                color: var(--text-muted);
             }
 
+        /* Messages */
         #messages {
             flex: 1;
             overflow-y: auto;
-            padding: 24px;
+            padding: 32px 0;
             display: flex;
             flex-direction: column;
-            gap: 20px;
+            gap: 0;
         }
 
-        .message {
-            max-width: 820px;
-            width: 100%;
-            margin: 0 auto;
-            line-height: 1.6;
-            font-size: 14px;
-            white-space: pre-wrap;
-            word-break: break-word;
+            #messages::-webkit-scrollbar {
+                width: 3px;
+            }
+
+            #messages::-webkit-scrollbar-track {
+                background: transparent;
+            }
+
+            #messages::-webkit-scrollbar-thumb {
+                background: var(--border);
+                border-radius: 2px;
+            }
+
+        .message-row {
+            display: flex;
+            padding: 0 24px;
+            margin-bottom: 2px;
             flex-shrink: 0;
         }
 
-            .message.user {
-                color: #a0a0a0;
+            .message-row.user {
+                justify-content: flex-end;
             }
 
-                .message.user::before {
-                    content: "YOU";
-                    display: block;
-                    font-size: 10px;
-                    letter-spacing: 2px;
-                    color: #444;
-                    margin-bottom: 6px;
-                }
-
-            .message.assistant {
-                color: #e0e0e0;
+            .message-row.assistant {
+                justify-content: flex-start;
             }
 
-                .message.assistant::before {
-                    content: "KAMIL";
-                    display: block;
-                    font-size: 10px;
-                    letter-spacing: 2px;
-                    color: #4a9eff;
-                    margin-bottom: 6px;
+            .message-row.system-row {
+                justify-content: center;
+            }
+
+        .bubble {
+            max-width: 720px;
+            line-height: 1.65;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+
+            .bubble.user {
+                color: var(--text-muted);
+                font-size: 13px;
+                padding: 10px 14px;
+                background: var(--surface);
+                border: 1px solid var(--border);
+                border-radius: 8px 8px 2px 8px;
+            }
+
+            .bubble.assistant {
+                color: var(--text);
+                font-size: 14px;
+                padding: 12px 16px 12px 14px;
+                border-left: 2px solid var(--accent);
+                margin-left: 2px;
+            }
+
+                .bubble.assistant.council-response {
+                    border-left-color: var(--council-accent);
                 }
+
+        .role-label {
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: 9px;
+            letter-spacing: 0.15em;
+            margin-bottom: 6px;
+            display: block;
+        }
+
+            .role-label.kamil {
+                color: var(--accent);
+            }
+
+            .role-label.council {
+                color: var(--council-accent);
+            }
 
         .system-msg {
-            max-width: 820px;
-            margin: 0 auto;
-            font-size: 11px;
-            color: #333;
-            letter-spacing: 1px;
-            text-align: center;
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: 10px;
+            color: var(--text-dim);
+            letter-spacing: 0.1em;
+            padding: 6px 0;
         }
 
-        #input-area {
-            padding: 20px 24px;
-            border-top: 1px solid #1e1e1e;
+        /* Code blocks */
+        .bubble pre {
+            background: var(--code-bg);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            padding: 12px 14px;
+            overflow-x: auto;
+            margin: 10px 0;
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: 12px;
+            line-height: 1.6;
         }
 
-        #input-wrap {
-            max-width: 820px;
-            margin: 0 auto;
-            display: flex;
-            gap: 10px;
-            align-items: flex-end;
+        .bubble code {
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: 12px;
+            background: var(--code-bg);
+            padding: 1px 5px;
+            border-radius: 2px;
+            color: #93c5fd;
         }
 
-        #input {
-            flex: 1;
-            background: #111;
-            border: 1px solid #222;
-            border-radius: 6px;
-            color: #e0e0e0;
-            padding: 12px 16px;
-            font-size: 14px;
-            font-family: inherit;
-            resize: none;
-            min-height: 48px;
-            max-height: 200px;
-            outline: none;
-            transition: border-color 0.15s;
-            line-height: 1.5;
+        .bubble pre code {
+            background: transparent;
+            padding: 0;
+            color: var(--text);
         }
 
-            #input:focus {
-                border-color: #333;
+        /* Cursor */
+        .cursor {
+            display: inline-block;
+            width: 1.5px;
+            height: 14px;
+            background: var(--accent);
+            margin-left: 2px;
+            vertical-align: middle;
+            animation: blink 1s infinite;
+        }
+
+        @keyframes blink {
+            0%, 49% {
+                opacity: 1;
             }
 
-        #send-btn {
-            background: #1a1a2e;
-            border: 1px solid #2a2a4a;
-            color: #4a9eff;
-            padding: 12px 20px;
+            50%, 100% {
+                opacity: 0;
+            }
+        }
+
+        /* Council block */
+        .council-block {
+            max-width: 720px;
+            margin: 0 24px;
+            border: 1px solid var(--border);
             border-radius: 6px;
-            cursor: pointer;
+            overflow: hidden;
+            flex-shrink: 0;
+            margin-bottom: 2px;
+        }
+
+        .council-section-label {
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: 9px;
+            letter-spacing: 0.15em;
+            padding: 7px 14px;
+            border-bottom: 1px solid var(--border);
+        }
+
+            .council-section-label.analyst {
+                color: #22c55e;
+                background: #0a1a0a;
+            }
+
+            .council-section-label.advocate {
+                color: #f97316;
+                background: #1a0d00;
+            }
+
+            .council-section-label.synthesizer {
+                color: var(--council-accent);
+                background: #0e0a1a;
+            }
+
+        .council-section-body {
+            padding: 12px 14px;
             font-size: 13px;
-            letter-spacing: 1px;
-            transition: all 0.15s;
-            height: 48px;
+            line-height: 1.65;
+            max-height: 220px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            word-break: break-word;
         }
 
-            #send-btn:hover {
-                background: #1e1e3a;
-                border-color: #4a9eff;
+            .council-section-body.analyst {
+                color: #a3d9a5;
+                background: #080d08;
             }
 
-            #send-btn:disabled {
-                opacity: 0.4;
-                cursor: not-allowed;
+            .council-section-body.advocate {
+                color: #d4a0a0;
+                background: #0d0800;
             }
 
-        #action-btn {
-            background: #0d1a0d;
-            border: 1px solid #2a4a2a;
-            color: #4aff4a;
-            padding: 12px 16px;
-            border-radius: 6px;
-            cursor: pointer;
-            font-size: 13px;
-            letter-spacing: 1px;
-            transition: all 0.15s;
-            height: 48px;
-        }
-
-            #action-btn:hover {
-                background: #1a2e1a;
-                border-color: #4aff4a;
+            .council-section-body.synthesizer {
+                color: var(--text);
+                background: #0a080f;
             }
 
-            #action-btn:disabled {
-                opacity: 0.4;
-                cursor: not-allowed;
+            .council-section-body::-webkit-scrollbar {
+                width: 3px;
             }
 
-        #confirmation-panel {
+            .council-section-body::-webkit-scrollbar-thumb {
+                background: var(--border);
+            }
+
+        /* Confirmation panel */
+        #confirm-panel {
             position: fixed;
-            bottom: 120px;
+            bottom: 90px;
             left: 50%;
             transform: translateX(-50%);
-            width: 820px;
+            width: 680px;
             max-width: calc(100vw - 48px);
-            background: #111;
-            border: 1px solid #4a9eff;
-            border-radius: 8px;
-            padding: 16px;
+            background: var(--surface);
+            border: 1px solid var(--accent);
+            border-radius: 6px;
+            padding: 16px 18px;
             z-index: 100;
             display: none;
         }
 
-            #confirmation-panel.visible {
+            #confirm-panel.visible {
                 display: block;
             }
 
-        .confirm-title {
-            font-size: 11px;
-            letter-spacing: 2px;
-            color: #4a9eff;
+        .confirm-label {
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: 9px;
+            letter-spacing: 0.15em;
+            color: var(--accent);
             margin-bottom: 10px;
         }
 
-        .confirm-action-detail {
-            background: #0a0a0a;
-            border: 1px solid #222;
+        .confirm-detail {
+            background: var(--code-bg);
+            border: 1px solid var(--border);
             border-radius: 4px;
             padding: 10px 12px;
-            font-size: 12px;
-            font-family: 'Cascadia Code', monospace;
-            color: #e0e0e0;
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: 11px;
+            color: var(--text);
             white-space: pre-wrap;
-            max-height: 150px;
+            max-height: 120px;
             overflow-y: auto;
             margin-bottom: 12px;
         }
 
-        .confirm-buttons {
+        .confirm-actions {
             display: flex;
             gap: 8px;
             justify-content: flex-end;
         }
 
-        .confirm-approve {
-            background: #0d1a0d;
-            border: 1px solid #4aff4a;
-            color: #4aff4a;
-            padding: 7px 16px;
-            border-radius: 4px;
+        .confirm-approve, .confirm-reject {
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: 10px;
+            letter-spacing: 0.1em;
+            padding: 6px 14px;
+            border-radius: 3px;
             cursor: pointer;
-            font-size: 11px;
-            letter-spacing: 1px;
+            border: 1px solid;
+            background: transparent;
+            transition: all 0.15s;
         }
+
+        .confirm-approve {
+            border-color: var(--success);
+            color: var(--success);
+        }
+
+            .confirm-approve:hover {
+                background: rgba(34, 197, 94, 0.1);
+            }
 
         .confirm-reject {
-            background: #1a0d0d;
-            border: 1px solid #ff4a4a;
-            color: #ff4a4a;
-            padding: 7px 16px;
-            border-radius: 4px;
+            border-color: #ef4444;
+            color: #ef4444;
+        }
+
+            .confirm-reject:hover {
+                background: rgba(239, 68, 68, 0.1);
+            }
+
+        /* Input area */
+        #input-area {
+            border-top: 1px solid var(--border);
+            padding: 16px 24px;
+            flex-shrink: 0;
+            background: var(--bg);
+        }
+
+        #input-wrap {
+            max-width: 720px;
+            margin: 0 auto;
+            position: relative;
+        }
+
+        #input {
+            width: 100%;
+            background: var(--input-bg);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            color: var(--text);
+            padding: 12px 52px 12px 14px;
+            font-size: 13px;
+            font-family: 'IBM Plex Sans', sans-serif;
+            font-weight: 300;
+            resize: none;
+            min-height: 46px;
+            max-height: 180px;
+            outline: none;
+            transition: border-color 0.15s;
+            line-height: 1.6;
+            letter-spacing: 0.01em;
+        }
+
+            #input:focus {
+                border-color: var(--border-hover);
+            }
+
+            #input::placeholder {
+                color: var(--text-dim);
+            }
+
+        #send-btn {
+            position: absolute;
+            right: 10px;
+            bottom: 10px;
+            background: transparent;
+            border: none;
+            color: var(--text-dim);
             cursor: pointer;
+            padding: 4px 6px;
+            border-radius: 3px;
+            transition: color 0.15s;
+            font-family: 'IBM Plex Mono', monospace;
             font-size: 11px;
-            letter-spacing: 1px;
+            letter-spacing: 0.05em;
         }
 
-            #council-btn {
-                background: #1a0a2e;
-                border: 1px solid #4a2a8a;
-                color: #9a6aff;
-                padding: 12px 16px;
-                border-radius: 6px;
-                cursor: pointer;
-                font-size: 13px;
-                letter-spacing: 1px;
-                transition: all 0.15s;
-                height: 48px;
-            }
-
-                #council-btn:hover {
-                    background: #2a1a4e;
-                    border-color: #9a6aff;
-                }
-
-                #council-btn:disabled {
-                    opacity: 0.4;
-                    cursor: not-allowed;
-                }
-
-            .council-block {
-                max-width: 820px;
-                width: 100%;
-                margin: 0 auto;
-                border: 1px solid #2a2a2a;
-                border-radius: 6px;
-                overflow: visible;
-                flex-shrink: 0;
-            }
-
-            .council-role {
-                padding: 12px 16px;
-                font-size: 13px;
-                line-height: 1.6;
-                white-space: pre-wrap;
-                word-break: break-word;
-                max-height: 250px;
-                overflow-y: scroll;
-                flex-shrink: 0;
-            }
-
-            .council-role::-webkit-scrollbar { width: 3px; }
-            .council-role::-webkit-scrollbar-track { background: transparent; }
-            .council-role::-webkit-scrollbar-thumb { background: #444; border-radius: 2px; }
-
-            .council-role-label {
-                font-size: 10px;
-                letter-spacing: 2px;
-                padding: 8px 16px;
-                border-bottom: 1px solid #1a1a1a;
-            }
-
-            .analyst-label {
-                background: #0d1a0d;
-                color: #4aff4a;
-            }
-
-            .analyst-body {
-                background: #0a120a;
-                color: #c0d0c0;
-            }
-
-            .advocate-label {
-                background: #1a0d0d;
-                color: #ff6a4a;
-            }
-
-            .advocate-body {
-                background: #120a0a;
-                color: #d0c0c0;
-            }
-
-            .synthesizer-label {
-                background: #0d0d1a;
-                color: #9a6aff;
-            }
-
-            .synthesizer-body {
-                background: #0a0a12;
-                color: #e0e0e0;
-            }
-
-        .cursor {
-            display: inline-block;
-            width: 2px;
-            height: 14px;
-            background: #4a9eff;
-            margin-left: 2px;
-            animation: blink 0.8s infinite;
-            vertical-align: middle;
+        #mic-btn {
+            position: absolute;
+            right: 52px;
+            bottom: 10px;
+            background: transparent;
+            border: 1px solid var(--border);
+            color: var(--text-dim);
+            cursor: pointer;
+            padding: 4px 8px;
+            border-radius: 3px;
+            transition: all 0.15s;
+            font-size: 10px;
+            font-family: 'IBM Plex Mono', monospace;
+            letter-spacing: 0.08em;
+            line-height: 1.8;
         }
 
-        @keyframes blink {
+            #mic-btn:hover {
+                color: var(--text-muted);
+                border-color: var(--border-hover);
+            }
+
+            #mic-btn.recording {
+                color: #ef4444;
+                border-color: #ef4444;
+                animation: pulse 1s infinite;
+            }
+
+        @keyframes pulse {
             0%, 100% {
                 opacity: 1;
             }
 
             50% {
-                opacity: 0;
+                opacity: 0.4;
             }
         }
 
-        #messages::-webkit-scrollbar {
-            width: 4px;
+        #send-btn:hover {
+            color: var(--accent);
         }
 
-        #messages::-webkit-scrollbar-track {
+        #send-btn:disabled {
+            opacity: 0.2;
+            cursor: not-allowed;
+        }
+
+        #input-hint {
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: 10px;
+            color: var(--text-dim);
+            letter-spacing: 0.08em;
+            margin-top: 8px;
+            text-align: center;
+        }
+
+            #input-hint span {
+                color: var(--text-muted);
+            }
+
+        /* Scrollbar for council sections */
+        .council-section-body::-webkit-scrollbar-track {
             background: transparent;
-        }
-
-        #messages::-webkit-scrollbar-thumb {
-            background: #222;
-            border-radius: 2px;
         }
     </style>
 </head>
 <body>
+
     <div id="header">
-        <h1>KAMIL</h1>
-        <div id="project-selector">
-            <select id="project-select"><option value="">— select project —</option></select>
-            <button id="load-project-btn" onclick="loadProject()">LOAD</button>
-            <span id="project-status">NO PROJECT</span>
+        <div id="header-left">
+            <div id="wordmark">KAMIL</div>
+            <div id="project-selector">
+                <select id="project-select"><option value="">no project</option></select>
+                <button id="load-btn" onclick="loadProject()">load</button>
+                <span id="project-status">—</span>
+            </div>
         </div>
-        <button id="reset-btn" onclick="resetChat()">RESET</button>
+        <div id="header-right">
+            <div id="memory-indicator">
+                <div id="memory-dot"></div>
+                <span id="memory-label">memory active</span>
+            </div>
+            <button id="reset-btn" onclick="resetChat()">clear</button>
+        </div>
     </div>
+
     <div id="messages">
-        <div class="system-msg">KAMIL · LOCAL · OFFLINE · SELECT A PROJECT TO ENABLE CONTEXT</div>
+        <div class="message-row system-row">
+            <span class="system-msg">kamil · local · offline · type /council for deliberation</span>
+        </div>
     </div>
+
+    <div id="confirm-panel">
+        <div class="confirm-label">ACTION REQUIRES APPROVAL</div>
+        <div class="confirm-detail" id="confirm-detail"></div>
+        <div class="confirm-actions">
+            <button class="confirm-reject" onclick="rejectAction()">reject</button>
+            <button class="confirm-approve" onclick="approveAction()">approve</button>
+        </div>
+    </div>
+
     <div id="input-area">
         <div id="input-wrap">
-            <textarea id="input" placeholder="Ask Kamil..." rows="1"></textarea>
-            <button id="action-btn" onclick="sendWithActions()">ACTION</button>
-            <button id="council-btn" onclick="sendCouncil()">COUNCIL</button>
-            <button id="send-btn" onclick="sendMessage()">SEND</button>
+            <textarea id="input" placeholder="ask kamil anything..." rows="1"></textarea>
+            <button id="mic-btn" onclick="toggleMic()">🎤</button>
+            <button id="send-btn" onclick="sendMessage()">↑</button>
         </div>
+        <div id="input-hint">enter to send · shift+enter for newline · <span>/council</span> for deliberation</div>
     </div>
-    <div id="confirmation-panel">
-        <div class="confirm-title">ACTION REQUIRES APPROVAL</div>
-        <div class="confirm-action-detail" id="confirm-detail"></div>
-        <div class="confirm-buttons">
-            <button class="confirm-reject" onclick="rejectAction()">REJECT</button>
-            <button class="confirm-approve" onclick="approveAction()">APPROVE</button>
-        </div>
-    </div>
+
     <script>
         const messagesEl = document.getElementById('messages');
         const inputEl = document.getElementById('input');
         const sendBtn = document.getElementById('send-btn');
         const projectSelect = document.getElementById('project-select');
         const projectStatus = document.getElementById('project-status');
-        const loadBtn = document.getElementById('load-project-btn');
+        const loadBtn = document.getElementById('load-btn');
+
+        let pendingActions = [];
+        let currentActionIndex = 0;
+
+        // Voice variables
+        let mediaRecorder = null;
+        let audioChunks = [];
+        let isRecording = false;
+
+        async function toggleMic() {
+            if (isRecording) {
+                mediaRecorder.stop();
+                return;
+            }
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                audioChunks = [];
+                mediaRecorder = new MediaRecorder(stream);
+                mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
+                mediaRecorder.onstop = async () => {
+                    stream.getTracks().forEach(t => t.stop());
+                    document.getElementById('mic-btn').classList.remove('recording');
+                    isRecording = false;
+                    const blob = new Blob(audioChunks, { type: 'audio/webm' });
+                    appendSystem('transcribing...');
+                    try {
+                        const res = await fetch('/transcribe', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'audio/webm' },
+                            body: blob
+                        });
+                        const data = await res.json();
+                        console.log('transcribe result:', data); // Debug log
+                        // Remove transcribing message
+                        const msgs = document.querySelectorAll('.system-msg');
+                        msgs[msgs.length - 1].parentElement.remove();
+                        if (data.text) {
+                            await sendVoiceMessage(data.text);
+                        } else {
+                            appendSystem('could not transcribe audio');
+                        }
+                    } catch (e) {
+                        appendSystem('transcription error: ' + e.message);
+                    }
+                };
+                mediaRecorder.start();
+                isRecording = true;
+                document.getElementById('mic-btn').classList.add('recording');
+                appendSystem('recording... tap mic to stop');
+            } catch (e) {
+                appendSystem('mic error: ' + e.message);
+            }
+        }
+
+        async function sendVoiceMessage(text) {
+            if (!text || sendBtn.disabled) return;
+            inputEl.value = '';
+            setDisabled(true);
+            appendUser(text);
+            const contentEl = appendAssistant('', false);
+            const cursor = document.createElement('span');
+            cursor.className = 'cursor';
+            contentEl.parentElement.appendChild(cursor);
+
+            try {
+                const res = await fetch('/voice_chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ content: text })
+                });
+                const data = await res.json();
+
+                if (data.error) {
+                    contentEl.textContent = 'Error: ' + data.error;
+                    return;
+                }
+
+                contentEl.textContent = data.text;
+
+                // Play audio response
+                if (data.audio) {
+                    const audioData = atob(data.audio);
+                    const audioArray = new Uint8Array(audioData.length);
+                    for (let i = 0; i < audioData.length; i++) {
+                        audioArray[i] = audioData.charCodeAt(i);
+                    }
+                    const blob = new Blob([audioArray], { type: 'audio/wav' });
+                    const url = URL.createObjectURL(blob);
+                    const audio = new Audio(url);
+                    audio.play().then(() => {
+                        console.log('audio playing');
+                    }).catch(e => {
+                        console.error('audio play failed:', e);
+                    });
+                    audio.onended = () => URL.revokeObjectURL(url);
+                }
+            } catch (e) {
+                contentEl.textContent = 'Error: ' + e.message;
+            } finally {
+                if (cursor) cursor.remove();
+                setDisabled(false);
+                inputEl.focus();
+                scrollBottom();
+            }
+        }
+
+        // Auto-resize textarea
+        inputEl.addEventListener('input', () => {
+            inputEl.style.height = 'auto';
+            inputEl.style.height = Math.min(inputEl.scrollHeight, 180) + 'px';
+        });
+
+        inputEl.addEventListener('keydown', e => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendMessage();
+            }
+        });
+
+        function setDisabled(val) {
+            sendBtn.disabled = val;
+            inputEl.disabled = val;
+        }
+
+        function appendSystem(text) {
+            const row = document.createElement('div');
+            row.className = 'message-row system-row';
+            row.innerHTML = `<span class="system-msg">${text}</span>`;
+            messagesEl.appendChild(row);
+            scrollBottom();
+        }
+
+        function appendUser(text) {
+            const row = document.createElement('div');
+            row.className = 'message-row user';
+            row.innerHTML = `<div class="bubble user">${escapeHtml(text)}</div>`;
+            messagesEl.appendChild(row);
+            scrollBottom();
+        }
+
+        function appendAssistant(text, isCouncil) {
+            const row = document.createElement('div');
+            row.className = 'message-row assistant';
+            const bubble = document.createElement('div');
+            bubble.className = 'bubble assistant' + (isCouncil ? ' council-response' : '');
+
+            const label = document.createElement('span');
+            label.className = 'role-label ' + (isCouncil ? 'council' : 'kamil');
+            label.textContent = isCouncil ? 'COUNCIL' : 'KAMIL';
+            bubble.appendChild(label);
+
+            const content = document.createElement('span');
+            content.textContent = text || '';
+            bubble.appendChild(content);
+
+            row.appendChild(bubble);
+            messagesEl.appendChild(row);
+            scrollBottom();
+            return content;
+        }
+
+        function escapeHtml(text) {
+            return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        }
+
+        function scrollBottom() {
+            messagesEl.scrollTop = messagesEl.scrollHeight;
+        }
+
+        async function sendMessage() {
+            const text = inputEl.value.trim();
+            if (!text || sendBtn.disabled) return;
+            inputEl.value = '';
+            inputEl.style.height = 'auto';
+            setDisabled(true);
+
+            appendUser(text);
+
+            const isCouncil = text.startsWith('/council');
+            const cleanText = isCouncil ? text.slice(8).trim() : text;
+
+            if (isCouncil) {
+                await sendCouncil(cleanText);
+                setDisabled(false);
+                inputEl.focus();
+                return;
+            }
+
+            const contentEl = appendAssistant('', false);
+            const cursor = document.createElement('span');
+            cursor.className = 'cursor';
+            contentEl.parentElement.appendChild(cursor);
+
+            let fullText = '';
+
+            try {
+                const res = await fetch('/chat_agentic', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ content: text })
+                });
+
+                const reader = res.body.getReader();
+                const decoder = new TextDecoder();
+                let buffer = '';
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    buffer += decoder.decode(value, { stream: true });
+                    const lines = buffer.split('\n');
+                    buffer = lines.pop();
+                    for (const line of lines) {
+                        if (!line.startsWith('data: ')) continue;
+                        const data = line.slice(6);
+                        if (data === '[DONE]') continue;
+                        try {
+                            const parsed = JSON.parse(data);
+                            if (parsed.chunk) {
+                                fullText += parsed.chunk;
+                                contentEl.textContent = fullText;
+                                contentEl.parentElement.appendChild(cursor);
+                                scrollBottom();
+                            }
+                            if (parsed.pending_confirmation) {
+                                pendingActions = parsed.pending_confirmation;
+                                currentActionIndex = 0;
+                                showNextConfirmation();
+                            }
+                            if (parsed.error) {
+                                contentEl.textContent = 'Error: ' + parsed.error;
+                            }
+                        } catch { }
+                    }
+                }
+            } catch (e) {
+                contentEl.textContent = 'Connection error: ' + e.message;
+            } finally {
+                cursor.remove();
+                setDisabled(false);
+                inputEl.focus();
+            }
+        }
+
+        async function sendCouncil(text) {
+            appendSystem('council deliberating...');
+            try {
+                const res = await fetch('/council', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ content: text })
+                });
+                const data = await res.json();
+
+                // Remove "deliberating" message
+                const msgs = messagesEl.querySelectorAll('.system-msg');
+                msgs[msgs.length - 1].parentElement.remove();
+
+                if (data.error) { appendSystem('council error: ' + data.error); return; }
+
+                const block = document.createElement('div');
+                block.className = 'council-block';
+                block.innerHTML = `
+                      <div class="council-section-label analyst">ANALYST — QWEN</div>
+                      <div class="council-section-body analyst">${escapeHtml(data.analyst || '')}</div>
+                      <div class="council-section-label advocate">DEVIL'S ADVOCATE — DOLPHIN</div>
+                      <div class="council-section-body advocate">${escapeHtml(data.advocate || '')}</div>
+                      <div class="council-section-label synthesizer">SYNTHESIZER — LLAMA 3.1</div>
+                      <div class="council-section-body synthesizer">${escapeHtml(data.synthesizer || '')}</div>
+                    `;
+                messagesEl.appendChild(block);
+                setTimeout(() => messagesEl.scrollTop = messagesEl.scrollHeight, 50);
+            } catch (e) {
+                appendSystem('council error: ' + e.message);
+            }
+        }
+
+        function showNextConfirmation() {
+            if (currentActionIndex >= pendingActions.length) {
+                document.getElementById('confirm-panel').classList.remove('visible');
+                pendingActions = [];
+                currentActionIndex = 0;
+                return;
+            }
+            const action = pendingActions[currentActionIndex];
+            document.getElementById('confirm-detail').textContent = JSON.stringify(action, null, 2);
+            document.getElementById('confirm-panel').classList.add('visible');
+        }
+
+        async function approveAction() {
+            const action = pendingActions[currentActionIndex];
+            const res = await fetch('/execute_action', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action })
+            });
+            const result = await res.json();
+            appendSystem(`action: ${action.type} — ${result.success ? 'done' : result.error}`);
+            currentActionIndex++;
+            showNextConfirmation();
+        }
+
+        function rejectAction() {
+            appendSystem(`action rejected: ${pendingActions[currentActionIndex].type}`);
+            currentActionIndex++;
+            showNextConfirmation();
+        }
 
         async function loadProjects() {
             const res = await fetch('/projects');
@@ -481,9 +959,8 @@
             const name = projectSelect.value;
             if (!name) return;
             loadBtn.disabled = true;
-            projectStatus.textContent = 'INDEXING...';
+            projectStatus.textContent = 'indexing...';
             projectStatus.className = 'loading';
-            appendSystem(`Indexing ${name}...`);
             try {
                 const res = await fetch('/select_project', {
                     method: 'POST',
@@ -491,226 +968,19 @@
                     body: JSON.stringify({ project_name: name })
                 });
                 const data = await res.json();
-                projectStatus.textContent = `${name} · ${data.chunks} chunks`;
+                projectStatus.textContent = data.chunks === 'cached' ? `${name} · cached` : `${name} · ${data.chunks} chunks`;
                 projectStatus.className = 'active';
-                appendSystem(`${name} indexed — ${data.chunks} chunks. Context enabled.`);
-            } catch (e) {
-                projectStatus.textContent = 'ERROR';
+            } catch {
+                projectStatus.textContent = 'error';
                 projectStatus.className = '';
             }
             loadBtn.disabled = false;
         }
 
-        inputEl.addEventListener('input', () => {
-            inputEl.style.height = 'auto';
-            inputEl.style.height = Math.min(inputEl.scrollHeight, 200) + 'px';
-        });
-
-        inputEl.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
-                sendMessage();
-            }
-        });
-
-        function appendSystem(text) {
-            const div = document.createElement('div');
-            div.className = 'system-msg';
-            div.textContent = text;
-            messagesEl.appendChild(div);
-            messagesEl.scrollTop = messagesEl.scrollHeight;
-        }
-
-        function appendMessage(role, content = '') {
-            const div = document.createElement('div');
-            div.className = `message ${role}`;
-            div.textContent = content;
-            messagesEl.appendChild(div);
-            messagesEl.scrollTop = messagesEl.scrollHeight;
-            return div;
-        }
-
-        async function sendMessage() {
-            const text = inputEl.value.trim();
-            if (!text || sendBtn.disabled) return;
-            inputEl.value = '';
-            inputEl.style.height = 'auto';
-            sendBtn.disabled = true;
-            appendMessage('user', text);
-            const assistantDiv = appendMessage('assistant', '');
-            const cursor = document.createElement('span');
-            cursor.className = 'cursor';
-            assistantDiv.appendChild(cursor);
-            let fullText = '';
-            try {
-                const response = await fetch('/chat_actions', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ content: text })
-                });
-                const reader = response.body.getReader();
-                const decoder = new TextDecoder();
-                let buffer = '';
-                while (true) {
-                    const { done, value } = await reader.read();
-                    if (done) break;
-                    buffer += decoder.decode(value, { stream: true });
-                    const lines = buffer.split('\n');
-                    buffer = lines.pop();
-                    for (const line of lines) {
-                        if (!line.startsWith('data: ')) continue;
-                        const data = line.slice(6);
-                        if (data === '[DONE]') continue;
-                        try {
-                            const parsed = JSON.parse(data);
-                            if (parsed.error) { assistantDiv.textContent = `Error: ${parsed.error}`; return; }
-                            if (parsed.chunk) {
-                                fullText += parsed.chunk;
-                                assistantDiv.textContent = fullText;
-                                assistantDiv.appendChild(cursor);
-                                messagesEl.scrollTop = messagesEl.scrollHeight;
-                            }
-                            if (parsed.pending_confirmation) {
-                                pendingActions = parsed.pending_confirmation;
-                                currentActionIndex = 0;
-                                showNextConfirmation();
-                            }
-                        } catch { }
-                    }
-                }
-            } catch (err) {
-                assistantDiv.textContent = `Connection error: ${err.message}`;
-            } finally {
-                cursor.remove();
-                sendBtn.disabled = false;
-                inputEl.focus();
-            }
-        }
-
         async function resetChat() {
             await fetch('/reset', { method: 'POST' });
             messagesEl.innerHTML = '';
-            appendSystem('KAMIL · LOCAL · OFFLINE · SELECT A PROJECT TO ENABLE CONTEXT');
-        }
-
-        async function sendCouncil() {
-            const text = inputEl.value.trim();
-            if (!text || sendBtn.disabled) return;
-            inputEl.value = '';
-            inputEl.style.height = 'auto';
-            sendBtn.disabled = true;
-            document.getElementById('council-btn').disabled = true;
-
-            appendMessage('user', text);
-            const statusDiv = document.createElement('div');
-            statusDiv.className = 'system-msg';
-            statusDiv.textContent = 'Council deliberating...';
-            messagesEl.appendChild(statusDiv);
-            messagesEl.scrollTop = messagesEl.scrollHeight;
-
-            try {
-                const res = await fetch('/council', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ content: text })
-                });
-                const data = await res.json();
-                statusDiv.remove();
-
-                if (data.error) {
-                    appendSystem(`Council error: ${data.error}`);
-                    return;
-                }
-
-                const block = document.createElement('div');
-                block.className = 'council-block';
-                block.innerHTML = `
-                    <div class="council-role-label analyst-label">ANALYST — QWEN</div>
-                    <div class="council-role analyst-body">${data.analyst}</div>
-                    <div class="council-role-label advocate-label">DEVIL'S ADVOCATE — MISTRAL</div>
-                    <div class="council-role advocate-body">${data.advocate}</div>
-                    <div class="council-role-label synthesizer-label">SYNTHESIZER — LLAMA 3.1</div>
-                    <div class="council-role synthesizer-body">${data.synthesizer}</div>
-                `;
-                messagesEl.appendChild(block);
-                setTimeout(() => {
-                    messagesEl.scrollTop = messagesEl.scrollHeight;
-                }, 50);
-            } catch(e) {
-                appendSystem(`Council error: ${e.message}`);
-            } finally {
-                sendBtn.disabled = false;
-                document.getElementById('council-btn').disabled = false;
-                inputEl.focus();
-            }
-        }
-
-        let pendingActions = [];
-        let currentActionIndex = 0;
-
-        function showNextConfirmation() {
-            if (currentActionIndex >= pendingActions.length) {
-                document.getElementById('confirmation-panel').classList.remove('visible');
-                pendingActions = [];
-                currentActionIndex = 0;
-                return;
-            }
-            const action = pendingActions[currentActionIndex];
-            document.getElementById('confirm-detail').textContent = JSON.stringify(action, null, 2);
-            document.getElementById('confirmation-panel').classList.add('visible');
-        }
-
-        async function approveAction() {
-            const action = pendingActions[currentActionIndex];
-            const res = await fetch('/execute_action', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ action })
-            });
-            const result = await res.json();
-            appendSystem(`Action executed: ${action.type} — ${result.success ? 'OK' : result.error}`);
-            currentActionIndex++;
-            showNextConfirmation();
-        }
-
-        function rejectAction() {
-            const action = pendingActions[currentActionIndex];
-            appendSystem(`Action rejected: ${action.type}`);
-            currentActionIndex++;
-            showNextConfirmation();
-        }
-
-        async function sendWithActions() {
-            const text = inputEl.value.trim();
-            if (!text || sendBtn.disabled) return;
-            inputEl.value = '';
-            inputEl.style.height = 'auto';
-            sendBtn.disabled = true;
-            appendMessage('user', text);
-            const assistantDiv = appendMessage('assistant', '');
-            try {
-                const res = await fetch('/chat_actions', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ content: text })
-                });
-                const data = await res.json();
-                if (data.error) {
-                    assistantDiv.textContent = `Error: ${data.error}`;
-                    return;
-                }
-                assistantDiv.textContent = data.response;
-                if (data.pending_confirmation && data.pending_confirmation.length > 0) {
-                    pendingActions = data.pending_confirmation;
-                    currentActionIndex = 0;
-                    showNextConfirmation();
-                }
-            } catch(e) {
-                assistantDiv.textContent = `Error: ${e.message}`;
-            } finally {
-                sendBtn.disabled = false;
-                inputEl.focus();
-            }
+            appendSystem('kamil · local · offline · type /council for deliberation');
         }
 
         async function restoreSession() {
@@ -718,11 +988,10 @@
             const data = await res.json();
             if (data.history && data.history.length > 0) {
                 data.history.forEach(msg => {
-                    if (msg.role === 'user' || msg.role === 'assistant') {
-                        appendMessage(msg.role, msg.content);
-                    }
+                    if (msg.role === 'user') appendUser(msg.content);
+                    else if (msg.role === 'assistant') appendAssistant(msg.content, false);
                 });
-                appendSystem(`Session restored — ${data.history.length} messages`);
+                appendSystem(`session restored · ${data.history.length} messages`);
             }
             if (data.project) {
                 projectStatus.textContent = `${data.project} · restored`;
@@ -737,12 +1006,7 @@
             }
         }
 
-        async function loadProjectsAndRestore() {
-            await loadProjects();
-            await restoreSession();
-        }
-
-        loadProjectsAndRestore();
+        loadProjects().then(restoreSession);
     </script>
 </body>
 </html>

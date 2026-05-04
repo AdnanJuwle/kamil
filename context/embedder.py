@@ -8,16 +8,20 @@ os.environ["HF_DATASETS_OFFLINE"] = "1"
 EMBEDDING_MODEL = "all-MiniLM-L6-v2"
 CHROMA_PATH = os.path.join(DATA_DIR, "chroma")
 
+# Singleton client — only one instance allowed per path
+_chroma_client = None
+
+def get_chroma_client():
+    global _chroma_client
+    if _chroma_client is None:
+        _chroma_client = chromadb.PersistentClient(path=CHROMA_PATH)
+    return _chroma_client
+
 class Embedder:
     def __init__(self):
         print("Loading embedding model...")
         self.model = SentenceTransformer(EMBEDDING_MODEL)
-        self.client = chromadb.PersistentClient(
-            path=CHROMA_PATH,
-            settings=chromadb.Settings(
-                anonymized_telemetry=False
-            )
-        )
+        self.client = get_chroma_client()
         print("Embedding model ready.")
 
     def get_or_create_collection(self, project_name: str):

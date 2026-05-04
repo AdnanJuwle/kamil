@@ -1,5 +1,6 @@
 from models.client import LlamaClient
 from core.config import DEFAULT_TEMPERATURE
+from core.council_loader import load_council, unload_council
 
 ANALYST_URL = "http://127.0.0.1:8080"
 ADVOCATE_URL = "http://127.0.0.1:8081"
@@ -49,6 +50,7 @@ class Council:
 
     def deliberate(self, user_message: str, context: str = "") -> dict:
         context_block = f"\n\nRelevant context:\n{context}" if context else ""
+        load_council()  # no-op if already running
 
         # Step 1 — Analyst
         analyst_messages = [
@@ -71,9 +73,14 @@ class Council:
         ]
         synthesizer_output = self.synthesizer.chat(synthesizer_messages, temperature=0.5, max_tokens=600)
 
-        return {
+            
+        result = {
             "analyst": analyst_output,
             "advocate": advocate_output,
             "synthesizer": synthesizer_output,
             "final": synthesizer_output
         }
+    
+        #unload_council()  # free VRAM after council finishes
+        return result
+
