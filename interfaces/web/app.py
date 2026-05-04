@@ -32,6 +32,20 @@ KOKORO_MODEL = r"C:\kamil\voices\kokoro-v1.0.onnx"
 KOKORO_VOICES = r"C:\kamil\voices\voices-v1.0.bin"
 KAMIL_VOICE = "am_michael"
 
+
+class EmcpRequest(BaseModel):
+    tool_name: str
+    server_id: str
+    content: dict
+
+class EmcpManyRequest(BaseModel):
+    responses: list[dict]
+
+class ToolExecute(BaseModel):
+    tool: str
+    params: dict
+
+
 _kokoro = None
 
 def get_tts():
@@ -59,6 +73,7 @@ def clean_for_tts(text: str) -> str:
 def synthesize_to_wav(text: str) -> bytes:
     text = clean_for_tts(text)
     if not text.strip():
+        print("Warning: synthesize_to_wav received empty text after cleaning")
         return b''
     tts = get_tts()
     samples, rate = tts.create(text, voice=KAMIL_VOICE, speed=1.1, lang='en-us')
@@ -205,6 +220,15 @@ async def debug_prompt():
     messages = kamil._build_messages(test_message)
     return {"system_prompt_length": len(messages[0]["content"]), "system_prompt": messages[0]["content"][:500]}
 
+@app.get("/debug_full_prompt")
+async def debug_full_prompt():
+    test_message = "check ekf.py for bugs in update_gps method"
+    messages = kamil._build_messages(test_message)
+    return {
+        "system_prompt_length": len(messages[0]["content"]),
+        "system_prompt_full": messages[0]["content"]
+    }
+
 @app.post("/chat_agentic")
 async def chat_agentic(message: Message):
     return StreamingResponse(
@@ -289,11 +313,11 @@ async def voice_chat(message: Message):
         identity = load_identity()
         threads = get_threads_summary()
         
-        voice_system = """You are Kamil, a direct personal AI assistant responding via voice.  You have real opinions and you share them directly.
-When asked to pick a side, pick one. When asked your view, give it.
-Never say 'as an AI I cannot'. You are Kamil, not a corporate chatbot. Keep responses under 3 sentences. Natural spoken language only, no markdown.
+        voice_system = """You are Kamil, a direct personal AI assistant responding via voice. You have real opinions and you share them directly.
 
-You can and should share opinions, preferences, and takes on any topic when asked. Be direct and conversational like a knowledgeable friend, not a corporate assistant.
+Keep responses under 3 sentences. Natural spoken language only, no markdown or code blocks.
+
+You can and should share opinions, preferences, and takes on any topic when asked. Be direct and conversational like a knowledgeable friend, not a corporate assistant. Never say "as an AI I cannot" or "I'm unable to offer personal opinions" — you are Kamil, not a restricted chatbot.
 
 For controversial or sensitive topics: give your honest direct take in 2 sentences maximum. Never hedge endlessly. If you have a view, state it briefly.
 
@@ -368,8 +392,13 @@ For everything else — answer directly with your honest take."""
         
         handoff_phrases = ["let me check", "give me a moment", "one moment", "checking that"]
         is_handoff = any(p in quick_response.lower() for p in handoff_phrases)
-        
-        if not is_handoff and quick_response.strip():
+
+        if not quick_response.strip():
+            # Voice model returned nothing — fall through to primary
+            print("Quick response was empty, falling through to primary model")
+            quick_response = "let me check that for you"
+            is_handoff = True
+        elif not is_handoff and quick_response.strip():
             kamil.history.append({"role": "user", "content": message.content})
             kamil.history.append({"role": "assistant", "content": quick_response})
             save_history(kamil.history)
@@ -465,3 +494,29 @@ def generate_action_sse(user_message: str):
     except RuntimeError as e:
         error = json.dumps({"error": str(e)})
         yield f"data: {error}\n\n"
+
+
+
+@app.post("/execute_tool")
+async def execute_tool_endpoint(data: ToolExecute):
+    from actions.tools import execute_tool
+    result = execute_tool(data.tool, data.params)
+    return result.to_dict()
+
+
+@app.post("/emcp/process")
+async def emcp_process(data: EmcpRequest):
+    from actions.emcp_client import process
+    result = process(data.tool_name, data.server_id, data.content)
+    return result
+
+@app.post("/emcp/process_many")
+async def emcp_process_many(data: EmcpManyRequest):
+    from actions.emcp_client import process_many
+    result = process_many(data.responses)
+    return result
+
+@app.get("/emcp/health")
+async def emcp_health():
+    from actions.emcp_client import is_available
+    return {"available": is_available()}
