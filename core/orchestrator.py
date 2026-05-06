@@ -207,6 +207,7 @@ class Orchestrator:
                             system += f"\n\n## CODE CONTEXT\n{context}"
                 except Exception as e:
                     print(f"[orchestrator] Symbol context error: {e}")
+                    # Fallback to chunk retrieval
                     try:
                         chunks = self.indexer.embedder.query(
                             self.indexer.current_project,
@@ -214,10 +215,11 @@ class Orchestrator:
                             n_results=5
                         )
                         if chunks:
-                            system += "\n\n## CODE CONTEXT (chunks)\n"
+                            system += "\n\n## CODE CONTEXT\n"
                             for chunk in chunks:
                                 system += f"\n```python\n{chunk['text']}\n```\n"
                     except Exception:
+                        pass
                         pass
 
         elif intent == "self":
@@ -251,6 +253,15 @@ class Orchestrator:
             yield chunk
         self.history.append({"role": "user", "content": user_message})
         self.history.append({"role": "assistant", "content": full_response})
+
+        # Detect if user is correcting Kamil
+        correction_words = ["wrong", "incorrect", "that's not right", "no that's", 
+                            "you're wrong", "mistake", "error", "not what i said",
+                            "that's false", "incorrect"]
+        if any(w in user_message.lower() for w in correction_words):
+            from memory.sanity import record_correction
+            record_correction()
+
         save_history(self.history)
 
     def chat(self, user_message: str, temperature: float = DEFAULT_TEMPERATURE, max_tokens: int = DEFAULT_MAX_TOKENS) -> str:

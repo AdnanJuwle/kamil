@@ -520,3 +520,20 @@ async def emcp_process_many(data: EmcpManyRequest):
 async def emcp_health():
     from actions.emcp_client import is_available
     return {"available": is_available()}
+
+@app.get("/drift")
+async def drift_report():
+    from memory.sanity import get_drift_report
+    return get_drift_report()
+
+@app.post("/drift/reset")
+async def drift_reset():
+    from memory.sanity import reset_drift_state
+    reset_drift_state()
+    return {"status": "drift state reset"}
+
+@app.post("/drift/correction")
+async def drift_correction():
+    from memory.sanity import record_correction
+    record_correction()
+    return {"status": "correction recorded"}
