@@ -14,6 +14,7 @@ class Indexer:
     def __init__(self):
         self.embedder = Embedder()
         self.current_project = None
+        self._project_roots = [PROJECTS_DIR]
 
     def _load_indexed_cache(self) -> set:
         try:
@@ -97,10 +98,75 @@ class Indexer:
             self.embedder.delete_file(project_name, file_path)
             self.embedder.index_chunks(project_name, chunks)
 
+    def _get_project_root(self, project_name: str) -> str | None:
+        """Find the root directory of a project."""
+        # Check known locations
+        candidates = [
+            os.path.join(r'C:\Users\adnan\Documents\repos', project_name, 'navigation_ros'),
+            os.path.join(r'C:\Users\adnan\Documents\repos', project_name),
+            os.path.join(r'C:\kamil\workspace', project_name),
+        ]
+        for path in candidates:
+            if os.path.isdir(path):
+                return path
+        return None
+
     def query(self, query_text: str, n_results: int = 8) -> list[dict]:
         if not self.current_project:
             return []
         return self.embedder.query(self.current_project, query_text, n_results)
+
+    def get_relevant_files(self, project: str, query: str, n_files: int = 4) -> list[dict]:
+        """
+        Two-phase retrieval:
+        1. Semantic search to find relevant file names
+        2. Read full content of those files
+
+        Returns list of {filename, content, path, lines}
+        """
+        if not self.current_project:
+            return []
+
+        # Phase 1 — get chunks and extract unique filenames
+        project_path = Path(PROJECTS_DIR) / project
+        if not project_path.exists():
+            return []
+
+        chunks = self.embedder.query(project, query, n_results=20)
+        seen_files = []
+        seen_paths = set()
+
+        for chunk in chunks:
+            metadata = chunk.get('metadata', {})
+            filepath = metadata.get('file_path', '')
+
+            if filepath and filepath not in seen_paths:
+                seen_paths.add(filepath)
+                seen_files.append(filepath)
+
+            if len(seen_files) >= n_files:
+                break
+
+        # Phase 2 — read full files
+        results = []
+        for filepath in seen_files:
+            try:
+                if not os.path.exists(filepath):
+                    continue
+
+                with open(filepath, 'r', encoding='utf-8', errors='replace') as f:
+                    content = f.read()
+
+                results.append({
+                    'filename': os.path.basename(filepath),
+                    'path': filepath,
+                    'content': content,
+                    'lines': len(content.splitlines())
+                })
+            except Exception as e:
+                print(f"Error reading {filepath}: {e}")
+
+        return results
 
     def start_watching(self):
         from context.watcher import FileWatcher

@@ -949,16 +949,16 @@
         }
 
         async function approveAction() {
-            const action = pendingActions[currentActionIndex];
-            const res = await fetch('/execute_action', {
+            const action = pendingActions[currentActionIndex]
+            const res = await fetch('/execute_tool', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ action })
-            });
-            const result = await res.json();
-            appendSystem(`action: ${action.type} — ${result.success ? 'done' : result.error}`);
-            currentActionIndex++;
-            showNextConfirmation();
+                body: JSON.stringify({ tool: action.tool, params: action.params })
+            })
+            const result = await res.json()
+            appendSystem(`tool: ${action.tool} — ${result.success ? 'done' : result.error}`)
+            currentActionIndex++
+            showNextConfirmation()
         }
 
         function rejectAction() {
