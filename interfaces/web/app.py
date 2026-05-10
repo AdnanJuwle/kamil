@@ -324,6 +324,17 @@ async def chat_agentic(message: Message):
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
     )
 
+@app.get("/time")
+async def current_time():
+    from datetime import datetime
+    now = datetime.now()
+    return {
+        "time": now.strftime("%I:%M %p"),
+        "date": now.strftime("%B %d, %Y"),
+        "day": now.strftime("%A"),
+        "weekday": now.weekday()
+    }
+
 @app.post("/update_identity")
 async def update_identity_endpoint(data: IdentityUpdate):
     from memory.identity import update_identity

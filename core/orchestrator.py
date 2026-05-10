@@ -151,6 +151,64 @@ class Orchestrator:
 
         return "general"
 
+    def _get_schedule_context(self) -> str:
+        """Return a concise description of the current time block and day's focus."""
+        from datetime import datetime
+        now = datetime.now()
+        hour = now.hour
+        minute = now.minute
+        total = hour * 60 + minute
+        weekday = now.weekday()  # 0=Monday
+
+        # Daily blocks (minutes since midnight)
+        blocks = [
+            (0,   360,  "sleep hours"),
+            (360, 390,  "wake up and get ready"),
+            (390, 480,  "gym"),
+            (480, 510,  "home, shower, breakfast"),
+            (510, 540,  "morning wind-down — rest, not productive"),
+            (540, 690,  "deep work block 1"),
+            (690, 720,  "break — walk, snack, away from screen"),
+            (720, 840,  "deep work block 2"),
+            (840, 900,  "lunch and rest"),
+            (900, 960,  "applications block — Upwork, LinkedIn, Wellfound"),
+            (960, 1005, "exam prep"),
+            (1005,1035, "leetcode — one easy problem, 30 min max"),
+            (1035,1080, "free time"),
+            (1080,1200, "gaming or entertainment — guilt free"),
+            (1200,1260, "dinner"),
+            (1260,1305, "optional light evening block"),
+            (1305,1440, "wind down, sleep by 11pm"),
+        ]
+
+        current_block = "unscheduled"
+        for start, end, label in blocks:
+            if start <= total < end:
+                current_block = label
+                break
+
+        # Weekly focus
+        weekly = {
+            0: "Monday — deploy something + MLOps course",
+            1: "Tuesday — MLOps course + PRANA work",
+            2: "Wednesday — build day + Kamil work",
+            3: "Thursday — MLOps course + deploy or build",
+            4: "Friday — PRANA + Twitter build series doc",
+            5: "Saturday — full project day, extended gaming evening",
+            6: "Sunday — weekly review + rest, no work after 12pm",
+        }
+
+        day_focus = weekly.get(weekday, "")
+        day_name = now.strftime("%A")
+        time_str = now.strftime("%I:%M %p")
+        date_str = now.strftime("%B %d, %Y")
+
+        return (
+            f"Current time: {day_name}, {date_str}, {time_str} IST\n"
+            f"Current block: {current_block}\n"
+            f"Today's focus: {day_focus}"
+        )
+
     def _build_messages(self, user_message: str) -> list[dict]:
         intent = self._classify_intent(user_message)
         system = self.system_prompt
@@ -182,6 +240,13 @@ class Orchestrator:
 
         if self._new_user and not self.history:
             system += "\n\nThis is a new user. Introduce yourself briefly and ask their name naturally."
+
+        # Time and schedule awareness
+        schedule_ctx = self._get_schedule_context()
+        system += f"\n\n## SCHEDULE\n{schedule_ctx}"
+        system += "\nIf Adnan is chatting during a deep work block, gently acknowledge it. Don't lecture, just be aware."
+        system += "\nIf Adnan is chatting during a deep work block, gently acknowledge it. Don't lecture, just be aware."
+        system += "\nWhen mentioning schedule — be direct, no motivational padding, no 'optimal productivity' language."
 
         if is_religious_query(user_message):
             religious_results = query_religious(user_message, n_results=3)
