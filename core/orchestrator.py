@@ -8,11 +8,14 @@ from actions.dispatcher import parse_actions, requires_confirmation, execute_act
 from memory.store import save_history, load_history, clear_history, save_setting, load_setting
 from memory.identity import load_identity, is_new_user, update_identity
 from memory.threads import get_threads_summary
+from memory.thread_state import get_thread_context_block, update_thread
 from memory.long_term import LongTermMemory
 from memory.compressor import compress_messages, should_compress
+from memory.context_manager import get_context_manager
 from typing import Generator
 import json
 import re
+import os
 from context.religious_indexer import query_religious, is_religious_query
 
 VOICE_HANDOFF_PHRASES = [
@@ -47,6 +50,13 @@ class Orchestrator:
         last_project = load_setting("last_project")
         self._last_project = last_project if last_project else None
         self._new_user = is_new_user()
+
+        # Initialize context manager
+        self.ctx = get_context_manager()
+
+        # Load existing history into RAM on startup (last 10 messages)
+        for msg in self.history[-10:]:
+            self.ctx.add_message(msg)
 
     def _init_council(self):
         try:
@@ -182,6 +192,11 @@ class Orchestrator:
                 ])
                 system += f"\n\nRelevant Islamic sources — quote accurately from these, never fabricate verses:\n{context_text}"
 
+        # Thread state injection — survives compression
+        thread_block = get_thread_context_block()
+        if thread_block:
+            system += f"\n\n## ACTIVE THREAD\n{thread_block}"
+
         # Symbol-aware code context
         if self.context_enabled and self.indexer and self.indexer.current_project:
             intent = self._classify_intent(user_message)
@@ -220,15 +235,17 @@ class Orchestrator:
                                 system += f"\n```python\n{chunk['text']}\n```\n"
                     except Exception:
                         pass
-                        pass
 
         elif intent == "self":
             system += "\n\nThe user is asking about you or your memory. Answer from your knowledge about the user and your memory system. Do not reference code or project files."
 
-        trimmed_history = self.history[-6:] if len(self.history) > 6 else self.history
-        total_chars = len(system) + sum(len(m["content"]) for m in trimmed_history)
-        if total_chars > 20000:
-            trimmed_history = self.history[-2:] if len(self.history) > 2 else self.history
+        # Get context from manager (RAM + cache hits)
+        context_messages = self.ctx.build_context(user_message)
+
+        # Token guard
+        total_chars = len(system) + sum(len(m.get("content","")) for m in context_messages)
+        if total_chars > 24000:
+            context_messages = self.ctx.ram[-4:]
 
         try:
             from actions.emcp_client import is_available, format_for_prompt
@@ -240,7 +257,7 @@ class Orchestrator:
         except Exception:
             pass
 
-        messages = [{"role": "system", "content": system}] + trimmed_history
+        messages = [{"role": "system", "content": system}] + context_messages
         messages.append({"role": "user", "content": user_message})
         return messages
 
@@ -253,6 +270,10 @@ class Orchestrator:
             yield chunk
         self.history.append({"role": "user", "content": user_message})
         self.history.append({"role": "assistant", "content": full_response})
+
+        # Add to context manager
+        self.ctx.add_message({"role": "user", "content": user_message})
+        self.ctx.add_message({"role": "assistant", "content": full_response})
 
         # Detect if user is correcting Kamil
         correction_words = ["wrong", "incorrect", "that's not right", "no that's", 
@@ -270,6 +291,11 @@ class Orchestrator:
         response = self.client.chat(messages, temperature=temperature, max_tokens=max_tokens)
         self.history.append({"role": "user", "content": user_message})
         self.history.append({"role": "assistant", "content": response})
+
+        # Add to context manager
+        self.ctx.add_message({"role": "user", "content": user_message})
+        self.ctx.add_message({"role": "assistant", "content": response})
+
         save_history(self.history)
         return response
 
@@ -321,6 +347,29 @@ class Orchestrator:
             return
 
         if intent == "code" and self.context_enabled and self.indexer:
+            # ---- Index on demand if a .py file is mentioned ----
+            file_matches = re.findall(r'(\w+)\.py', user_message, re.IGNORECASE)
+            if file_matches:
+                try:
+                    structure = self.indexer.get_project_structure(
+                        self.indexer.current_project
+                    )
+                    for fname in file_matches:
+                        matches = [
+                            f["path"] for f in structure.get("files", [])
+                            if f["path"].lower().endswith(f"{fname.lower()}.py")
+                        ]
+                        for rel_path in matches[:2]:
+                            full_path = os.path.join(
+                                structure["root"], rel_path
+                            )
+                            self.indexer.index_file_on_demand(
+                                full_path, 
+                                self.indexer.current_project
+                            )
+                except Exception as e:
+                    print(f"[agentic] Index-on-demand failed: {e}")
+            # ----------------------------------------------------
             try:
                 from context.symbol_indexer import get_symbol_index
                 project_root = self.indexer._get_project_root(
@@ -415,6 +464,7 @@ When the user says 'create a file' without specifying location, create it in the
             compress_messages(self.history, current_project)
         self.history = []
         clear_history()
+        self.ctx.clear()
 
     def chat_voice(self, user_message: str) -> Generator[dict, None, None]:
         self._maybe_compress()

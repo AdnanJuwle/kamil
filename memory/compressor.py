@@ -43,8 +43,25 @@ Be specific and factual. Preserve technical details. Output only valid JSON."""}
         {"role": "user", "content": conversation}
     ]
 
+
+    import re
+
+    response = client.chat(prompt_messages, temperature=0.1, max_tokens=400)
+
+    if not response or not response.strip():
+        print("[compressor] Empty response — skipping")
+        return ""
+
+    # Strip DeepSeek R1 thinking blocks
+    response = re.sub(r'<think>.*?</think>', '', response, flags=re.DOTALL).strip()
+
+    if not response:
+        print("[compressor] Only thinking content — skipping")
+        return ""
+
     try:
-        response = client.chat(prompt_messages, temperature=0.1, max_tokens=400)
+ 
+        # ----------------------------------------------------
         clean = re.sub(r'```json|```', '', response).strip()
         data = json.loads(clean)
         summary = data.get("summary", "")
@@ -74,7 +91,6 @@ Be specific and factual. Preserve technical details. Output only valid JSON."""}
         else:
             print(f"[compressor] Memory REJECTED: {validation.reason}")
             print(f"[compressor] Failed checks: {validation.checks_failed}")
-            # Don't store bad memory
             return ""
 
     except json.JSONDecodeError as e:

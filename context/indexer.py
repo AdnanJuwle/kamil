@@ -3,6 +3,7 @@ from pathlib import Path
 from context.parser import parse_file
 from context.embedder import Embedder
 from context.watcher import WATCHED_EXTENSIONS, EXCLUDED_DIRS
+from datetime import datetime
 
 EXCLUDED_FILES = {'package-lock.json', 'yarn.lock', 'poetry.lock', '.gitignore'}
 PROJECTS_DIR = r"C:\Users\adnan\Documents\repos"
@@ -183,3 +184,144 @@ class Indexer:
     def stop_watching(self):
         if hasattr(self, 'watcher'):
             self.watcher.stop()
+
+    def scan_project_structure(self, project_name: str) -> dict:
+        """
+        Lightweight scan — no embedding, just folder tree.
+        Runs on startup in milliseconds.
+        """
+        project_root = self._get_project_root(project_name)
+        if not project_root:
+            return {}
+
+        structure = {
+            "project": project_name,
+            "root": project_root,
+            "scanned_at": datetime.now().isoformat(),
+            "files": [],
+            "dirs": [],
+            "total_py_files": 0,
+            "total_files": 0
+        }
+
+        skip_dirs = {"__pycache__", ".git", "venv", "venv313", 
+                     "node_modules", ".venv", "dist", "build"}
+
+        for root, dirs, files in os.walk(project_root):
+            dirs[:] = [d for d in dirs if d not in skip_dirs]
+            rel_root = os.path.relpath(root, project_root)
+
+            if rel_root != ".":
+                structure["dirs"].append(rel_root)
+
+            for f in files:
+                rel_path = os.path.join(rel_root, f)
+                full_path = os.path.join(root, f)
+                try:
+                    size = os.path.getsize(full_path)
+                except Exception:
+                    size = 0
+                structure["files"].append({
+                    "path": rel_path,
+                    "size": size,
+                    "is_py": f.endswith(".py")
+                })
+                structure["total_files"] += 1
+                if f.endswith(".py"):
+                    structure["total_py_files"] += 1
+
+        # Save to disk
+        scan_path = os.path.join(
+            r"C:\kamil\data\projects",
+            f"{project_name}_scan.json"
+        )
+        os.makedirs(os.path.dirname(scan_path), exist_ok=True)
+        with open(scan_path, "w", encoding="utf-8") as f:
+            json.dump(structure, f, indent=2)
+
+        print(f"[indexer] Scanned {project_name}: "
+              f"{structure['total_files']} files, "
+              f"{structure['total_py_files']} Python files")
+        return structure
+
+    def get_project_structure(self, project_name: str) -> dict:
+        """Load cached scan or run fresh scan."""
+        scan_path = os.path.join(
+            r"C:\kamil\data\projects",
+            f"{project_name}_scan.json"
+        )
+        if os.path.exists(scan_path):
+            with open(scan_path, "r") as f:
+                return json.load(f)
+        return self.scan_project_structure(project_name)
+
+    def index_file_on_demand(self, filepath: str, project_name: str) -> bool:
+        """
+        Index a single file if not already indexed.
+        Called when a specific file is referenced in a query.
+        """
+        try:
+            from context.symbol_indexer import get_symbol_index
+            project_root = self._get_project_root(project_name)
+            if not project_root:
+                return False
+
+            sym_idx = get_symbol_index(project_name, project_root)
+
+            # Check if this file's symbols are already indexed
+            symbols = sym_idx.get_file_symbols(filepath)
+            if symbols:
+                return True  # already indexed
+
+            # Index just this file
+            from context.symbol_indexer import extract_symbols
+            file_symbols, file_info = extract_symbols(filepath)
+            if not file_symbols:
+                return False
+
+            # Add to existing collection
+            collection = sym_idx._get_collection(create=False)
+            if not collection:
+                collection = sym_idx._get_collection(create=True)
+
+            embedder = sym_idx._get_embedder()
+            texts = []
+            for sym in file_symbols:
+                text_parts = [
+                    f"File: {os.path.basename(filepath)}",
+                    f"{sym.kind.upper()}: "
+                    f"{sym.parent_class + '.' if sym.parent_class else ''}{sym.name}",
+                ]
+                if sym.docstring:
+                    text_parts.append(f"Description: {sym.docstring[:200]}")
+                text_parts.append(sym.source[:1500])
+                texts.append("\n".join(text_parts))
+
+            import time
+            ids = [f"sym_od_{int(time.time())}_{i}" for i in range(len(file_symbols))]
+            metadatas = [{
+                "name": sym.name,
+                "kind": sym.kind,
+                "filepath": sym.filepath,
+                "lineno": sym.lineno,
+                "end_lineno": sym.end_lineno,
+                "parent_class": sym.parent_class,
+                "signature": sym.signature,
+                "module": os.path.basename(sym.filepath).replace(".py", ""),
+                "docstring": sym.docstring[:200],
+            } for sym in file_symbols]
+
+            embeddings = embedder.model.encode(texts).tolist()
+            collection.upsert(
+                ids=ids,
+                embeddings=embeddings,
+                documents=[sym.source for sym in file_symbols],
+                metadatas=metadatas
+            )
+            print(f"[indexer] On-demand indexed: {os.path.basename(filepath)} "
+                  f"({len(file_symbols)} symbols)")
+            return True
+
+        except Exception as e:
+            print(f"[indexer] On-demand index failed for {filepath}: {e}")
+            return False

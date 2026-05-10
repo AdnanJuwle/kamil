@@ -16,12 +16,19 @@ import whisper
 import tempfile
 import re
 import httpx
+import warnings
 from memory.identity import load_identity
 from memory.threads import get_threads_summary
 from memory.store import save_history
 from context.religious_indexer import query_religious, is_religious_query
 
-# ------------------------------------------------------------
+# Speaker recognition
+from memory.speaker import (
+    enroll_speaker, identify_from_wav_bytes, list_speakers,
+    remove_speaker, update_trust_level, set_current_speaker,
+    get_current_speaker, IdentificationResult, identify_speaker
+)
+
 # Kokoro TTS
 from kokoro_onnx import Kokoro
 import soundfile as sf
@@ -104,20 +111,18 @@ print("Whisper ready")
 indexer = Indexer()
 
 # Auto-load last project synchronously before server starts
+# Replace the existing auto-load block with:
 last_project = kamil._last_project
 if last_project:
     try:
-        projects = indexer.list_projects()
-        if last_project in projects:
-            if not indexer.is_indexed(last_project):
-                print(f"Indexing {last_project}...")
-                indexer.index_project(last_project)
-            else:
-                indexer.current_project = last_project
-            kamil.set_project(last_project, indexer)
-            print(f"Auto-loaded: {last_project}")
+        # Lightweight scan only — not full index
+        structure = indexer.scan_project_structure(last_project)
+        indexer.current_project = last_project
+        kamil.set_project(last_project, indexer)
+        print(f"Auto-scanned: {last_project} "
+              f"({structure.get('total_files', 0)} files)")
     except Exception as e:
-        print(f"Could not auto-load: {e}")
+        print(f"Could not auto-scan: {e}")
 
 @asynccontextmanager
 async def lifespan(app):
@@ -140,6 +145,14 @@ class IdentityUpdate(BaseModel):
     key: str
     value: object
 
+class SpeakerEnrollRequest(BaseModel):
+    name: str
+    trust_level: str = "trusted"
+
+class TrustUpdateRequest(BaseModel):
+    name: str
+    trust_level: str
+
 @app.get("/")
 async def index():
     html_path = os.path.join(os.path.dirname(__file__), "index.html")
@@ -160,17 +173,20 @@ async def get_history():
 
 @app.post("/select_project")
 async def select_project(data: ProjectSelect):
-    already_indexed = indexer.is_indexed(data.project_name)
-    if indexer.current_project == data.project_name or already_indexed:
-        indexer.current_project = data.project_name
-        kamil.set_project(data.project_name, indexer)
-        return {"status": "ok", "project": data.project_name, "chunks": "cached"}
-    def status(current, total, path):
-        pass
-    total = indexer.index_project(data.project_name, status_callback=status)
+    # Lightweight scan only — no embedding
+    structure = indexer.scan_project_structure(data.project_name)
+    
+    # Set as current project for context
+    indexer.current_project = data.project_name
     kamil.set_project(data.project_name, indexer)
-    return {"status": "ok", "project": data.project_name, "chunks": total}
-
+    
+    return {
+        "status": "ok",
+        "project": data.project_name,
+        "files": structure.get("total_files", 0),
+        "py_files": structure.get("total_py_files", 0),
+        "mode": "lazy"  # tells frontend no full index yet
+    }
 @app.post("/chat")
 async def chat(message: Message):
     return StreamingResponse(
@@ -214,7 +230,73 @@ async def debug():
         "test_query_results": len(test_results)
     }
 
-@app.get("/debug_prompt")
+# ------------------- Speaker Recognition ---------------------
+
+@app.get("/speakers")
+async def get_speakers():
+    return {"speakers": list_speakers()}
+
+@app.post("/speakers/remove/{name}")
+async def delete_speaker(name: str):
+    success = remove_speaker(name)
+    return {"success": success}
+
+@app.post("/speakers/trust")
+async def update_speaker_trust(data: TrustUpdateRequest):
+    success = update_trust_level(data.name, data.trust_level)
+    return {"success": success}
+
+@app.get("/speakers/current")
+async def current_speaker():
+    speaker = get_current_speaker()
+    if speaker:
+        return {
+            "name": speaker.speaker_name,
+            "trust_level": speaker.trust_level,
+            "confidence": speaker.confidence,
+            "identified": speaker.identified
+        }
+    return {"name": "unknown", "trust_level": "guest", "identified": False}
+
+@app.post("/speakers/enroll")
+async def enroll_speaker_endpoint(request: Request):
+    """
+    Enroll a speaker from voice audio.
+    Expects raw audio bytes with headers: X-Speaker-Name, X-Trust-Level
+    """
+    try:
+        body = await request.body()
+        name = request.headers.get("X-Speaker-Name", "unknown")
+        trust_level = request.headers.get("X-Trust-Level", "trusted")
+
+        # Save as temp webm, convert to wav
+        import subprocess
+        with tempfile.NamedTemporaryFile(suffix=".webm", delete=False) as f:
+            f.write(body)
+            webm_path = f.name
+
+        wav_path = webm_path.replace(".webm", ".wav")
+        subprocess.run([
+            "ffmpeg", "-y", "-i", webm_path,
+            "-ar", "16000", "-ac", "1", wav_path
+        ], capture_output=True)
+
+        audio, sr = sf.read(wav_path)
+        os.unlink(webm_path)
+        os.unlink(wav_path)
+
+        speaker = enroll_speaker(name, [audio], trust_level)
+        return {
+            "success": True,
+            "name": speaker.name,
+            "trust_level": speaker.trust_level,
+            "samples_used": speaker.enrollment_count
+        }
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return {"success": False, "error": str(e)}
+
 async def debug_prompt():
     test_message = "what files are in prana"
     messages = kamil._build_messages(test_message)
@@ -228,6 +310,11 @@ async def debug_full_prompt():
         "system_prompt_length": len(messages[0]["content"]),
         "system_prompt_full": messages[0]["content"]
     }
+
+@app.get("/context_stats")
+async def context_stats():
+    from memory.context_manager import get_context_manager
+    return get_context_manager().get_summary_stats()
 
 @app.post("/chat_agentic")
 async def chat_agentic(message: Message):
@@ -313,21 +400,53 @@ async def voice_chat(message: Message):
         identity = load_identity()
         threads = get_threads_summary()
         
-        voice_system = """You are Kamil, a direct personal AI assistant responding via voice. You have real opinions and you share them directly.
+        voice_system = """You are Kamil, Adnan's fully local personal AI assistant responding via voice.
 
-Keep responses under 3 sentences. Natural spoken language only, no markdown or code blocks.
+## IDENTITY
+You are built for Adnan, a Muslim engineer from India. You approach the world through an Islamic lens as a natural default. You are honest, direct, and treat Adnan like a close friend and peer who shares your faith.
 
-You can and should share opinions, preferences, and takes on any topic when asked. Be direct and conversational like a knowledgeable friend, not a corporate assistant. Never say "as an AI I cannot" or "I'm unable to offer personal opinions" — you are Kamil, not a restricted chatbot.
+## PERSONALITY
+- Direct and honest, never rude or dismissive toward Adnan
+- You have genuine opinions and share them — never say "as an AI I cannot"
+- You can disagree or push back, but always with respect
+- No corporate language, no endless hedging
+- Treat Adnan like your closest collaborator and friend
 
-For controversial or sensitive topics: give your honest direct take in 2 sentences maximum. Never hedge endlessly. If you have a view, state it briefly.
+## SPEAKER RECOGNITION
+You have voice recognition active. Act accordingly:
+- owner (Adnan): full trust, full context, closest relationship — be direct and warm
+- trusted: helpful, warm, but don't share Adnan's private context
+- guest: helpful for general questions only, no personal context
 
-If the question requires code analysis, project-specific file knowledge, or multi-step technical reasoning — respond with only: "let me check that for you"
+## MEMORY
+You have persistent memory. When memory is injected, it is real — from actual past conversations. Never say you can't remember past conversations.
 
-For everything else — answer directly with your honest take."""
+## VOICE RESPONSE RULES
+- Maximum 3 sentences for simple questions
+- Natural spoken language only — no markdown, no bullet points, no lists
+- For complex technical questions needing code or file context: say "let me check that for you"
+- For everything else: answer directly with your honest take
+- For controversial topics: give your actual view in 2 sentences max
+## RELIGIOUS ORIENTATION
+- Default moral framework: Islamic ethics (Quran + Sunnah)
+- You believe in Allah, respect the Quran and Sunnah as primary guidance
+- When asked about halal/haram: give the mainstream Islamic ruling first, then note scholarly differences if relevant
+- Never fabricate Quran verses or hadith — if you don't know the exact reference, say so
+- When Islamic source context is injected below, quote accurately from it
+- You can engage critically with Islamic questions — Adnan wants honest answers not just validation
+
+"""
         if identity.get("name"):
             voice_system += f"\nUser's name: {identity['name']}"
         if threads:
             voice_system += f"\nOngoing projects: {threads}"
+
+        # Inject speaker identity
+        from memory.speaker import get_current_speaker
+        current_speaker = get_current_speaker()
+        if current_speaker and current_speaker.identified:
+            voice_system += f"\n\nSpeaker identified by voice: {current_speaker.speaker_name} (trust: {current_speaker.trust_level}, confidence: {current_speaker.confidence})"
+            voice_system += f"\nYou recognized this person by their voice — acknowledge this naturally if asked."
             
         # Inject religious context if relevant
         if is_religious_query(message.content):
@@ -451,15 +570,43 @@ async def transcribe(request: Request):
         with tempfile.NamedTemporaryFile(suffix=".webm", delete=False) as f:
             f.write(body)
             tmp_path = f.name
+
         model = get_whisper()
         result = model.transcribe(tmp_path, language="en", task="transcribe", fp16=False)
-        print(f"Transcribe result: '{result['text']}'")
+        text = result["text"].strip()
+        print(f"Transcribe result: '{text}'")
+
+        # Identify speaker from same audio (before file deletion)
+        speaker_result = None
+        try:
+            import librosa
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                audio, sr = librosa.load(tmp_path, sr=16000, mono=True)
+            speaker_result = identify_speaker(audio, sample_rate=16000)
+            set_current_speaker(speaker_result)
+            print(f"[transcribe] Speaker: {speaker_result.speaker_name} "
+                  f"({speaker_result.trust_level}, conf={speaker_result.confidence:.2f})")
+        except Exception as e:
+            print(f"[transcribe] Speaker ID failed: {e}")
+
         os.unlink(tmp_path)
-        return {"text": result["text"].strip()}
+
+        response = {"text": text}
+        if speaker_result:
+            response["speaker"] = {
+                "name": speaker_result.speaker_name,
+                "trust_level": speaker_result.trust_level,
+                "confidence": speaker_result.confidence,
+                "identified": speaker_result.identified
+            }
+        return response
+
     except Exception as e:
         import traceback
         traceback.print_exc()
         return {"error": str(e)}
+
 
 # SSE generators
 def generate_sse(user_message: str):
