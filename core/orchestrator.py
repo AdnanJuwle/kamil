@@ -262,7 +262,28 @@ class Orchestrator:
         if thread_block:
             system += f"\n\n## ACTIVE THREAD\n{thread_block}"
 
-        # Symbol-aware code context
+        # Domain knowledge injection
+        from context.domain_indexer import is_domain_query, detect_query_domain, query_domain
+
+        if is_domain_query(user_message):
+            detected_domain = detect_query_domain(user_message)
+            prefer_ops = intent in ("code", "executor")
+            domain_results = query_domain(
+                user_message,
+                n_results=3,
+                domain_filter=detected_domain,
+                prefer_operational=prefer_ops
+            )
+            if domain_results:
+                domain_text = "\n\n".join([
+                    f"[{r['source']}, {r['domain']}, p{r['page']}]\n{r['text'][:500]}"
+                    for r in domain_results
+                ])
+                system += f"\n\nDomain knowledge:\n{domain_text}"
+                print(f"[orchestrator] Domain context: {len(domain_results)} chunks "
+                      f"from {detected_domain or 'mixed'}")
+
+                # Symbol-aware code context
         if self.context_enabled and self.indexer and self.indexer.current_project:
             intent = self._classify_intent(user_message)
             if intent in ("code", "general"):

@@ -695,3 +695,14 @@ async def drift_correction():
     from memory.sanity import record_correction
     record_correction()
     return {"status": "correction recorded"}
+
+@app.get("/domain_stats")
+async def domain_stats():
+    from context.domain_indexer import query_domain
+    from context.embedder import get_chroma_client
+    client = get_chroma_client()
+    try:
+        col = client.get_collection("kamil_domain")
+        return {"total_chunks": col.count(), "status": "ready"}
+    except Exception:
+        return {"total_chunks": 0, "status": "not indexed"}
