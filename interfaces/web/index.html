@@ -462,10 +462,83 @@
                 background: rgba(239, 68, 68, 0.1);
             }
 
+        /* Enroll modal */
+        #enroll-modal {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.7);
+            z-index: 200;
+            align-items: center;
+            justify-content: center;
+        }
+
+            #enroll-modal.visible {
+                display: flex;
+            }
+
+        #enroll-modal-box {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 24px;
+            width: 320px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        #enroll-modal-title {
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: 11px;
+            letter-spacing: 0.15em;
+            color: var(--accent);
+        }
+
+        #enroll-name, #enroll-trust {
+            background: var(--input-bg);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            color: var(--text);
+            padding: 8px 10px;
+            font-size: 12px;
+            font-family: 'IBM Plex Mono', monospace;
+            outline: none;
+            width: 100%;
+        }
+
+            #enroll-name:focus, #enroll-trust:focus {
+                border-color: var(--border-hover);
+            }
+
+        #enroll-modal-actions {
+            display: flex;
+            gap: 8px;
+            justify-content: flex-end;
+        }
+
+            #enroll-modal-actions button {
+                font-family: 'IBM Plex Mono', monospace;
+                font-size: 10px;
+                letter-spacing: 0.1em;
+                padding: 6px 14px;
+                border-radius: 3px;
+                cursor: pointer;
+                background: transparent;
+                border: 1px solid var(--border);
+                color: var(--text-muted);
+                transition: all 0.15s;
+            }
+
+        #enroll-start-btn {
+            border-color: var(--accent) !important;
+            color: var(--accent) !important;
+        }
+
         /* Input area */
         #input-area {
             border-top: 1px solid var(--border);
-            padding: 16px 24px;
+            padding: 12px 24px 16px;
             flex-shrink: 0;
             background: var(--bg);
         }
@@ -473,16 +546,73 @@
         #input-wrap {
             max-width: 720px;
             margin: 0 auto;
-            position: relative;
+        }
+
+        #input-toolbar {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            margin-bottom: 8px;
+            opacity: 1;
+            transition: opacity 0.2s;
+        }
+
+        #input-wrap:not(:focus-within) #input-toolbar {
+            opacity: 0.3;
+        }
+
+        #input-wrap:hover #input-toolbar,
+        #input-wrap:focus-within #input-toolbar {
+            opacity: 1;
+        }
+
+        .toolbar-btn {
+            background: transparent;
+            border: 1px solid var(--border);
+            color: var(--text-muted);
+            cursor: pointer;
+            padding: 4px 10px;
+            border-radius: 3px;
+            font-size: 10px;
+            font-family: 'IBM Plex Mono', monospace;
+            letter-spacing: 0.1em;
+            transition: all 0.15s;
+            white-space: nowrap;
+        }
+
+            .toolbar-btn:hover {
+                border-color: var(--border-hover);
+                color: var(--text);
+            }
+
+            .toolbar-btn.active {
+                border-color: #ef4444;
+                color: #ef4444;
+                animation: pulse 1s infinite;
+            }
+
+            .toolbar-btn.enroll {
+                margin-left: auto;
+            }
+
+                .toolbar-btn.enroll:hover {
+                    border-color: var(--accent);
+                    color: var(--accent);
+                }
+
+        #input-row {
+            display: flex;
+            align-items: flex-end;
+            gap: 8px;
         }
 
         #input {
-            width: 100%;
+            flex: 1;
             background: var(--input-bg);
             border: 1px solid var(--border);
             border-radius: 6px;
             color: var(--text);
-            padding: 12px 52px 12px 14px;
+            padding: 12px 14px;
             font-size: 13px;
             font-family: 'IBM Plex Sans', sans-serif;
             font-weight: 300;
@@ -504,67 +634,28 @@
             }
 
         #send-btn {
-            position: absolute;
-            right: 10px;
-            bottom: 10px;
-            background: transparent;
-            border: none;
-            color: var(--text-dim);
-            cursor: pointer;
-            padding: 4px 6px;
-            border-radius: 3px;
-            transition: color 0.15s;
-            font-family: 'IBM Plex Mono', monospace;
-            font-size: 11px;
-            letter-spacing: 0.05em;
-        }
-
-        #mic-btn {
-            position: absolute;
-            right: 52px;
-            bottom: 10px;
             background: transparent;
             border: 1px solid var(--border);
             color: var(--text-dim);
             cursor: pointer;
-            padding: 4px 8px;
-            border-radius: 3px;
+            padding: 8px 12px;
+            border-radius: 6px;
             transition: all 0.15s;
-            font-size: 10px;
             font-family: 'IBM Plex Mono', monospace;
-            letter-spacing: 0.08em;
-            line-height: 1.8;
+            font-size: 13px;
+            height: 46px;
+            flex-shrink: 0;
         }
 
-            #mic-btn:hover {
-                color: var(--text-muted);
-                border-color: var(--border-hover);
+            #send-btn:hover {
+                border-color: var(--accent);
+                color: var(--accent);
             }
 
-            #mic-btn.recording {
-                color: #ef4444;
-                border-color: #ef4444;
-                animation: pulse 1s infinite;
+            #send-btn:disabled {
+                opacity: 0.2;
+                cursor: not-allowed;
             }
-
-        @keyframes pulse {
-            0%, 100% {
-                opacity: 1;
-            }
-
-            50% {
-                opacity: 0.4;
-            }
-        }
-
-        #send-btn:hover {
-            color: var(--accent);
-        }
-
-        #send-btn:disabled {
-            opacity: 0.2;
-            cursor: not-allowed;
-        }
 
         #input-hint {
             font-family: 'IBM Plex Mono', monospace;
@@ -579,7 +670,16 @@
                 color: var(--text-muted);
             }
 
-        /* Scrollbar for council sections */
+        @keyframes pulse {
+            0%, 100% {
+                opacity: 1;
+            }
+
+            50% {
+                opacity: 0.4;
+            }
+        }
+
         .council-section-body::-webkit-scrollbar-track {
             background: transparent;
         }
@@ -620,11 +720,33 @@
         </div>
     </div>
 
+    <!-- Enroll modal -->
+    <div id="enroll-modal">
+        <div id="enroll-modal-box">
+            <div id="enroll-modal-title">ENROLL VOICE</div>
+            <input id="enroll-name" type="text" placeholder="name" />
+            <select id="enroll-trust">
+                <option value="owner">owner</option>
+                <option value="trusted" selected>trusted</option>
+                <option value="guest">guest</option>
+            </select>
+            <div id="enroll-modal-actions">
+                <button onclick="closeEnrollModal()">cancel</button>
+                <button id="enroll-start-btn" onclick="startEnrollment()">start recording</button>
+            </div>
+        </div>
+    </div>
+
     <div id="input-area">
         <div id="input-wrap">
-            <textarea id="input" placeholder="ask kamil anything..." rows="1"></textarea>
-            <button id="mic-btn" onclick="toggleMic()">🎤</button>
-            <button id="send-btn" onclick="sendMessage()">↑</button>
+            <div id="input-toolbar">
+                <button id="mic-btn" class="toolbar-btn" onclick="toggleMic()">mic</button>
+                <button id="enroll-btn" class="toolbar-btn enroll" onclick="enrollVoice()">enroll voice</button>
+            </div>
+            <div id="input-row">
+                <textarea id="input" placeholder="ask kamil anything..." rows="1"></textarea>
+                <button id="send-btn" onclick="sendMessage()">↑</button>
+            </div>
         </div>
         <div id="input-hint">enter to send · shift+enter for newline · <span>/council</span> for deliberation</div>
     </div>
@@ -646,6 +768,26 @@
         let isRecording = false;
         let currentAudio = null;
 
+        let disabledTimeout = null;        // track the hang‑timeout
+
+        function setDisabled(val) {
+            sendBtn.disabled = val;
+            inputEl.disabled = val;
+
+            // clear any previous timeout
+            if (disabledTimeout) clearTimeout(disabledTimeout);
+
+            if (val) {
+                // Auto‑reset after 30 seconds in case of a hang
+                disabledTimeout = setTimeout(() => {
+                    if (sendBtn.disabled) {
+                        console.log('Auto‑resetting disabled state after timeout');
+                        setDisabled(false);
+                    }
+                }, 120000);
+            }
+        }
+
         async function toggleMic() {
             // Interrupt any currently playing audio
             if (currentAudio) {
@@ -664,9 +806,15 @@
                 mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
                 mediaRecorder.onstop = async () => {
                     stream.getTracks().forEach(t => t.stop());
-                    document.getElementById('mic-btn').classList.remove('recording');
+                    document.getElementById('mic-btn').classList.remove('active');
                     isRecording = false;
+
+                    // Guard: prevent double processing if onstop fires twice
+                    if (audioChunks.length === 0) return;
+
                     const blob = new Blob(audioChunks, { type: 'audio/webm' });
+                    audioChunks = [];   // clear immediately to prevent double processing
+
                     appendSystem('transcribing...');
                     try {
                         const res = await fetch('/transcribe', {
@@ -676,7 +824,7 @@
                         });
                         const data = await res.json();
                         console.log('transcribe result:', data);
-                        // Remove transcribing message
+                        // Remove "transcribing" message
                         const msgs = document.querySelectorAll('.system-msg');
                         msgs[msgs.length - 1].parentElement.remove();
                         if (data.text) {
@@ -690,10 +838,74 @@
                 };
                 mediaRecorder.start();
                 isRecording = true;
-                document.getElementById('mic-btn').classList.add('recording');
+                document.getElementById('mic-btn').classList.add('active');
                 appendSystem('recording... tap mic to stop');
             } catch (e) {
                 appendSystem('mic error: ' + e.message);
+            }
+        }
+
+        function enrollVoice() {
+            document.getElementById('enroll-modal').classList.add('visible');
+            document.getElementById('enroll-name').focus();
+        }
+
+        function closeEnrollModal() {
+            document.getElementById('enroll-modal').classList.remove('visible');
+        }
+
+        async function startEnrollment() {
+            const name = document.getElementById('enroll-name').value.trim();
+            const trust = document.getElementById('enroll-trust').value;
+            if (!name) {
+                document.getElementById('enroll-name').focus();
+                return;
+            }
+            closeEnrollModal();
+
+            const enrollBtn = document.getElementById('enroll-btn');
+            enrollBtn.textContent = 'recording...';
+            enrollBtn.disabled = true;
+
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                const recorder = new MediaRecorder(stream);
+                const chunks = [];
+
+                recorder.ondataavailable = e => chunks.push(e.data);
+                recorder.onstop = async () => {
+                    stream.getTracks().forEach(t => t.stop());
+                    const blob = new Blob(chunks, { type: 'audio/webm' });
+                    appendSystem(`enrolling ${name}...`);
+                    try {
+                        const res = await fetch('/speakers/enroll', {
+                            method: 'POST',
+                            headers: {
+                                'X-Speaker-Name': name,
+                                'X-Trust-Level': trust
+                            },
+                            body: blob
+                        });
+                        const data = await res.json();
+                        if (data.success) {
+                            appendSystem(`voice enrolled: ${data.name} (${data.trust_level}, ${data.samples_used} samples)`);
+                        } else {
+                            appendSystem(`enrollment failed: ${data.error}`);
+                        }
+                    } catch (e) {
+                        appendSystem(`enrollment error: ${e.message}`);
+                    }
+                    enrollBtn.textContent = 'enroll voice';
+                    enrollBtn.disabled = false;
+                };
+
+                recorder.start();
+                appendSystem(`recording 15s — speak naturally...`);
+                setTimeout(() => recorder.stop(), 15000);
+            } catch (e) {
+                appendSystem(`mic error: ${e.message}`);
+                enrollBtn.textContent = 'enroll voice';
+                enrollBtn.disabled = false;
             }
         }
 
@@ -702,6 +914,7 @@
             inputEl.value = '';
             setDisabled(true);
             appendUser(text);
+
             const contentEl = appendAssistant('', false);
             const cursor = document.createElement('span');
             cursor.className = 'cursor';
@@ -733,7 +946,8 @@
             } catch (e) {
                 contentEl.textContent = 'Error: ' + e.message;
             } finally {
-                if (cursor) cursor.remove();
+                // safety: only remove cursor if it's still in the DOM
+                if (cursor && cursor.parentElement) cursor.remove();
                 setDisabled(false);
                 inputEl.focus();
                 scrollBottom();
@@ -765,7 +979,6 @@
             });
         }
 
-        // Auto-resize textarea
         inputEl.addEventListener('input', () => {
             inputEl.style.height = 'auto';
             inputEl.style.height = Math.min(inputEl.scrollHeight, 180) + 'px';
@@ -777,11 +990,6 @@
                 sendMessage();
             }
         });
-
-        function setDisabled(val) {
-            sendBtn.disabled = val;
-            inputEl.disabled = val;
-        }
 
         function appendSystem(text) {
             const row = document.createElement('div');
@@ -897,7 +1105,7 @@
             } catch (e) {
                 contentEl.textContent = 'Connection error: ' + e.message;
             } finally {
-                cursor.remove();
+                if (cursor && cursor.parentElement) cursor.remove();
                 setDisabled(false);
                 inputEl.focus();
             }
@@ -913,7 +1121,6 @@
                 });
                 const data = await res.json();
 
-                // Remove "deliberating" message
                 const msgs = messagesEl.querySelectorAll('.system-msg');
                 msgs[msgs.length - 1].parentElement.remove();
 
@@ -922,13 +1129,13 @@
                 const block = document.createElement('div');
                 block.className = 'council-block';
                 block.innerHTML = `
-                          <div class="council-section-label analyst">ANALYST — QWEN</div>
-                          <div class="council-section-body analyst">${escapeHtml(data.analyst || '')}</div>
-                          <div class="council-section-label advocate">DEVIL'S ADVOCATE — DOLPHIN</div>
-                          <div class="council-section-body advocate">${escapeHtml(data.advocate || '')}</div>
-                          <div class="council-section-label synthesizer">SYNTHESIZER — LLAMA 3.1</div>
-                          <div class="council-section-body synthesizer">${escapeHtml(data.synthesizer || '')}</div>
-                        `;
+                              <div class="council-section-label analyst">ANALYST — QWEN</div>
+                              <div class="council-section-body analyst">${escapeHtml(data.analyst || '')}</div>
+                              <div class="council-section-label advocate">DEVIL'S ADVOCATE — DOLPHIN</div>
+                              <div class="council-section-body advocate">${escapeHtml(data.advocate || '')}</div>
+                              <div class="council-section-label synthesizer">SYNTHESIZER — LLAMA 3.1</div>
+                              <div class="council-section-body synthesizer">${escapeHtml(data.synthesizer || '')}</div>
+                            `;
                 messagesEl.appendChild(block);
                 setTimeout(() => messagesEl.scrollTop = messagesEl.scrollHeight, 50);
             } catch (e) {

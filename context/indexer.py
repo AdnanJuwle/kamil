@@ -112,6 +112,22 @@ class Indexer:
                 return path
         return None
 
+    def list_projects(self) -> list[str]:
+        """Return names of all available project directories."""
+        projects_root = r"C:\Users\adnan\Documents\repos"
+        if not os.path.exists(projects_root):
+            return []
+
+        # Exclude non-project folders
+        exclude = {"leaked claude", ".git", "node_modules", "__pycache__"}
+
+        return [
+            d for d in os.listdir(projects_root)
+            if os.path.isdir(os.path.join(projects_root, d))
+            and not d.startswith(".")
+            and d not in exclude
+        ]
+
     def query(self, query_text: str, n_results: int = 8) -> list[dict]:
         if not self.current_project:
             return []

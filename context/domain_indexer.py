@@ -527,10 +527,15 @@ DOMAIN_KEYWORDS = {
 def is_domain_query(message: str) -> bool:
     """Check if message likely benefits from domain knowledge retrieval."""
     msg = message.lower()
+
+    # Must have at least 2 keyword matches or one very specific term
+    total_matches = 0
     for keywords in DOMAIN_KEYWORDS.values():
-        if any(kw in msg for kw in keywords):
-            return True
-    return False
+        for kw in keywords:
+            if kw in msg:
+                total_matches += 1
+
+    return total_matches >= 2
 
 
 def detect_query_domain(message: str) -> str | None:

@@ -109,20 +109,11 @@ print("Loading Whisper...")
 get_whisper()
 print("Whisper ready")
 indexer = Indexer()
-
-# Auto-load last project synchronously before server starts
-# Replace the existing auto-load block with:
-last_project = kamil._last_project
-if last_project:
-    try:
-        # Lightweight scan only — not full index
-        structure = indexer.scan_project_structure(last_project)
-        indexer.current_project = last_project
-        kamil.set_project(last_project, indexer)
-        print(f"Auto-scanned: {last_project} "
-              f"({structure.get('total_files', 0)} files)")
-    except Exception as e:
-        print(f"Could not auto-scan: {e}")
+kamil.enable_context(indexer)
+# On startup — only scan project names, don't load any project
+available_projects = indexer.list_projects()
+print(f"Projects available (lazy): {', '.join(available_projects)}")
+# No auto-load, no auto-scan
 
 @asynccontextmanager
 async def lifespan(app):
@@ -637,8 +628,10 @@ def generate_agentic_sse(user_message: str):
             yield f"data: {data}\n\n"
         yield "data: [DONE]\n\n"
     except Exception as e:
+        print(f"[agentic_sse] Error: {e}")
         error = json.dumps({"error": str(e)})
         yield f"data: {error}\n\n"
+        yield "data: [DONE]\n\n"
 
 def generate_action_sse(user_message: str):
     try:

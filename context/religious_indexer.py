@@ -1,6 +1,5 @@
-"""
+r"""
 C:\kamil\context\religious_indexer.py
-
 Indexes Quran and Sahih Bukhari into ChromaDB for semantic retrieval.
 Run once to index, then queries are fast.
 """
@@ -200,10 +199,17 @@ RELIGIOUS_KEYWORDS = [
 
 def is_religious_query(message: str) -> bool:
     msg = message.lower()
-    return any(kw in msg for kw in RELIGIOUS_KEYWORDS)
+    # Must contain explicit Islamic reference, not just moral topics
+    explicit_islamic = [
+        "quran", "hadith", "allah", "prophet", "islam", "muslim",
+        "salah", "prayer", "wudu", "zakat", "ramadan", "hajj",
+        "sunnah", "surah", "ayah", "dua", "masjid", "fiqh",
+        "what does islam say", "is it haram", "is it halal",
+        "ruling on", "forbidden in islam", "islamic perspective"
+    ]
+    return any(kw in msg for kw in explicit_islamic)
 
-
-if __name__ == "__main__":
+if __name__ == "__main__":S
     # Run indexing
     count = index_religious_texts()
     print(f"\nIndexing complete: {count} chunks ready")

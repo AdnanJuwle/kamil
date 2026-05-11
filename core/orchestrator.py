@@ -17,6 +17,10 @@ import json
 import re
 import os
 from context.religious_indexer import query_religious, is_religious_query
+import sys
+import io
+sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
 
 VOICE_HANDOFF_PHRASES = [
     "let me check that for you",
@@ -101,11 +105,10 @@ class Orchestrator:
                  {"role": "user", "content": user_message}],
                 temperature=0.1, max_tokens=500
             )
-    
+
         clean_text, actions = parse_actions(response)
         auto_executed = []
         pending_confirmation = []
-    
         for action in actions:
             if requires_confirmation(action):
                 pending_confirmation.append(action)
@@ -114,11 +117,11 @@ class Orchestrator:
                 auto_executed.append({"action": action, "result": result})
                 if result.get("success") and action["type"] == "read_file":
                     clean_text += f"\n\n[Read {action['path']} — {result['lines']} lines]"
-    
+
         self.history.append({"role": "user", "content": user_message})
         self.history.append({"role": "assistant", "content": clean_text or "Done."})
         save_history(self.history)
-    
+
         return {
             "response": clean_text or "Done.",
             "auto_executed": auto_executed,
@@ -151,16 +154,47 @@ class Orchestrator:
 
         return "general"
 
+    # _classify_banter, _chat_dolphin, BANTER_CLASSIFIER_PROMPT removed
+
+    def chat_stream(self, user_message: str, temperature: float = DEFAULT_TEMPERATURE, max_tokens: int = DEFAULT_MAX_TOKENS) -> Generator[str, None, None]:
+        # Banter check removed – all messages go through normal processing
+        yield from self.chat_stream_internal(user_message, temperature, max_tokens)
+
+    def chat_stream_internal(self, user_message: str, temperature: float = DEFAULT_TEMPERATURE, max_tokens: int = DEFAULT_MAX_TOKENS) -> Generator[str, None, None]:
+        self._maybe_compress()
+        messages = self._build_messages(user_message)
+        full_response = ""
+        for chunk in self.client.chat_stream(messages, temperature=temperature, max_tokens=max_tokens):
+            full_response += chunk
+            yield chunk
+        self.history.append({"role": "user", "content": user_message})
+        self.history.append({"role": "assistant", "content": full_response})
+
+        # Add to context manager
+        self.ctx.add_message({"role": "user", "content": user_message})
+        self.ctx.add_message({"role": "assistant", "content": full_response})
+
+        # Detect if user is correcting Kamil
+        correction_words = ["wrong", "incorrect", "that's not right", "no that's", 
+                            "you're wrong", "mistake", "error", "not what i said",
+                            "that's false", "incorrect"]
+        if any(w in user_message.lower() for w in correction_words):
+            from memory.sanity import record_correction
+            record_correction()
+
+        save_history(self.history)
+
+    # ... (rest of the class unchanged: _get_schedule_context, _build_messages, chat, chat_with_actions, chat_agentic, council_chat, set_project, enable_context, reset, chat_voice)
+    # Include all methods from the previous full version, just without the banter elements.
+
     def _get_schedule_context(self) -> str:
-        """Return a concise description of the current time block and day's focus."""
         from datetime import datetime
         now = datetime.now()
         hour = now.hour
         minute = now.minute
         total = hour * 60 + minute
-        weekday = now.weekday()  # 0=Monday
+        weekday = now.weekday()
 
-        # Daily blocks (minutes since midnight)
         blocks = [
             (0,   360,  "sleep hours"),
             (360, 390,  "wake up and get ready"),
@@ -187,7 +221,6 @@ class Orchestrator:
                 current_block = label
                 break
 
-        # Weekly focus
         weekly = {
             0: "Monday — deploy something + MLOps course",
             1: "Tuesday — MLOps course + PRANA work",
@@ -210,6 +243,17 @@ class Orchestrator:
         )
 
     def _build_messages(self, user_message: str) -> list[dict]:
+        greeting_patterns = ["hello", "hi", "hey", "good morning", "good evening", 
+                             "salam", "assalamu", "what's up", "sup"]
+        is_greeting = any(user_message.lower().strip().startswith(g) 
+                          for g in greeting_patterns) and len(user_message.split()) < 5
+
+        if is_greeting:
+            system_base = self.system_prompt
+            messages = [{"role": "system", "content": system_base}]
+            messages.append({"role": "user", "content": user_message})
+            return messages
+
         intent = self._classify_intent(user_message)
         system = self.system_prompt
 
@@ -241,10 +285,8 @@ class Orchestrator:
         if self._new_user and not self.history:
             system += "\n\nThis is a new user. Introduce yourself briefly and ask their name naturally."
 
-        # Time and schedule awareness
         schedule_ctx = self._get_schedule_context()
         system += f"\n\n## SCHEDULE\n{schedule_ctx}"
-        system += "\nIf Adnan is chatting during a deep work block, gently acknowledge it. Don't lecture, just be aware."
         system += "\nIf Adnan is chatting during a deep work block, gently acknowledge it. Don't lecture, just be aware."
         system += "\nWhen mentioning schedule — be direct, no motivational padding, no 'optimal productivity' language."
 
@@ -257,14 +299,30 @@ class Orchestrator:
                 ])
                 system += f"\n\nRelevant Islamic sources — quote accurately from these, never fabricate verses:\n{context_text}"
 
-        # Thread state injection — survives compression
         thread_block = get_thread_context_block()
         if thread_block:
             system += f"\n\n## ACTIVE THREAD\n{thread_block}"
 
-        # Domain knowledge injection
-        from context.domain_indexer import is_domain_query, detect_query_domain, query_domain
+        if self.indexer and not self.indexer.current_project:
+            available = self.indexer.list_projects()
+            msg_lower = user_message.lower()
+            for project in available:
+                if project.lower() in msg_lower:
+                    print(f"[orchestrator] Project mention detected: {project} — scanning")
+                    self.indexer.scan_project_structure(project)
+                    self.indexer.current_project = project
+                    self.context_enabled = True
+                    break
 
+        available_projects = self.indexer.list_projects() if self.indexer else []
+        if available_projects:
+            system += f"\n\nAvailable projects: {', '.join(available_projects)}"
+            if self.indexer and self.indexer.current_project:
+                system += f"\nCurrently loaded: {self.indexer.current_project}"
+            else:
+                system += "\nNo project loaded. Will auto-load when user mentions a project name."
+
+        from context.domain_indexer import is_domain_query, detect_query_domain, query_domain
         if is_domain_query(user_message):
             detected_domain = detect_query_domain(user_message)
             prefer_ops = intent in ("code", "executor")
@@ -274,6 +332,7 @@ class Orchestrator:
                 domain_filter=detected_domain,
                 prefer_operational=prefer_ops
             )
+            domain_results = [r for r in domain_results if r.get("score", 0) > 0.55]
             if domain_results:
                 domain_text = "\n\n".join([
                     f"[{r['source']}, {r['domain']}, p{r['page']}]\n{r['text'][:500]}"
@@ -283,7 +342,6 @@ class Orchestrator:
                 print(f"[orchestrator] Domain context: {len(domain_results)} chunks "
                       f"from {detected_domain or 'mixed'}")
 
-                # Symbol-aware code context
         if self.context_enabled and self.indexer and self.indexer.current_project:
             intent = self._classify_intent(user_message)
             if intent in ("code", "general"):
@@ -308,7 +366,6 @@ class Orchestrator:
                             system += f"\n\n## CODE CONTEXT\n{context}"
                 except Exception as e:
                     print(f"[orchestrator] Symbol context error: {e}")
-                    # Fallback to chunk retrieval
                     try:
                         chunks = self.indexer.embedder.query(
                             self.indexer.current_project,
@@ -325,10 +382,10 @@ class Orchestrator:
         elif intent == "self":
             system += "\n\nThe user is asking about you or your memory. Answer from your knowledge about the user and your memory system. Do not reference code or project files."
 
-        # Get context from manager (RAM + cache hits)
         context_messages = self.ctx.build_context(user_message)
+        if len(context_messages) > 4:
+            context_messages = context_messages[-4:]
 
-        # Token guard
         total_chars = len(system) + sum(len(m.get("content","")) for m in context_messages)
         if total_chars > 24000:
             context_messages = self.ctx.ram[-4:]
@@ -347,41 +404,14 @@ class Orchestrator:
         messages.append({"role": "user", "content": user_message})
         return messages
 
-    def chat_stream(self, user_message: str, temperature: float = DEFAULT_TEMPERATURE, max_tokens: int = DEFAULT_MAX_TOKENS) -> Generator[str, None, None]:
-        self._maybe_compress()
-        messages = self._build_messages(user_message)
-        full_response = ""
-        for chunk in self.client.chat_stream(messages, temperature=temperature, max_tokens=max_tokens):
-            full_response += chunk
-            yield chunk
-        self.history.append({"role": "user", "content": user_message})
-        self.history.append({"role": "assistant", "content": full_response})
-
-        # Add to context manager
-        self.ctx.add_message({"role": "user", "content": user_message})
-        self.ctx.add_message({"role": "assistant", "content": full_response})
-
-        # Detect if user is correcting Kamil
-        correction_words = ["wrong", "incorrect", "that's not right", "no that's", 
-                            "you're wrong", "mistake", "error", "not what i said",
-                            "that's false", "incorrect"]
-        if any(w in user_message.lower() for w in correction_words):
-            from memory.sanity import record_correction
-            record_correction()
-
-        save_history(self.history)
-
     def chat(self, user_message: str, temperature: float = DEFAULT_TEMPERATURE, max_tokens: int = DEFAULT_MAX_TOKENS) -> str:
         self._maybe_compress()
         messages = self._build_messages(user_message)
         response = self.client.chat(messages, temperature=temperature, max_tokens=max_tokens)
         self.history.append({"role": "user", "content": user_message})
         self.history.append({"role": "assistant", "content": response})
-
-        # Add to context manager
         self.ctx.add_message({"role": "user", "content": user_message})
         self.ctx.add_message({"role": "assistant", "content": response})
-
         save_history(self.history)
         return response
 
@@ -432,8 +462,18 @@ class Orchestrator:
             yield result["response"]
             return
 
-        if intent == "code" and self.context_enabled and self.indexer:
-            # ---- Index on demand if a .py file is mentioned ----
+        if self.indexer and not self.indexer.current_project:
+            available = self.indexer.list_projects()
+            msg_lower = user_message.lower()
+            for project in available:
+                if project.lower() in msg_lower:
+                    print(f"[orchestrator] Project mention detected: {project} — scanning")
+                    self.indexer.scan_project_structure(project)
+                    self.indexer.current_project = project
+                    self.context_enabled = True
+                    break
+
+        if intent == "code" and self.context_enabled and self.indexer and self.indexer.current_project:
             file_matches = re.findall(r'(\w+)\.py', user_message, re.IGNORECASE)
             if file_matches:
                 try:
@@ -455,7 +495,7 @@ class Orchestrator:
                             )
                 except Exception as e:
                     print(f"[agentic] Index-on-demand failed: {e}")
-            # ----------------------------------------------------
+
             try:
                 from context.symbol_indexer import get_symbol_index
                 project_root = self.indexer._get_project_root(

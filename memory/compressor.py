@@ -46,7 +46,7 @@ Be specific and factual. Preserve technical details. Output only valid JSON."""}
 
     import re
 
-    response = client.chat(prompt_messages, temperature=0.1, max_tokens=400)
+    response = client.chat(prompt_messages, temperature=0.1, max_tokens=600)
 
     if not response or not response.strip():
         print("[compressor] Empty response — skipping")
@@ -60,9 +60,21 @@ Be specific and factual. Preserve technical details. Output only valid JSON."""}
         return ""
 
     try:
- 
+
         # ----------------------------------------------------
         clean = re.sub(r'```json|```', '', response).strip()
+
+        # Attempt to repair truncated JSON
+        if not clean.endswith('}'):
+            # Find last complete key-value pair and close the object
+            last_quote = clean.rfind('"')
+            if last_quote > 0:
+                # Truncate to last complete string and close
+                clean = clean[:clean.rfind(',', 0, last_quote)] + '}'
+            else:
+                print("[compressor] Cannot repair truncated JSON — skipping")
+                return ""
+
         data = json.loads(clean)
         summary = data.get("summary", "")
         topics = data.get("topics", [])
