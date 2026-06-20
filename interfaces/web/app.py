@@ -118,10 +118,73 @@ available_projects = indexer.list_projects()
 print(f"Projects available (lazy): {', '.join(available_projects)}")
 # No auto-load, no auto-scan
 
+# ── Heartbeat: Kamil's proactive presence ─────────────────────────
+import threading
+from datetime import datetime as _dt
+
+HEARTBEAT_SECONDS = int(os.getenv("KAMIL_HEARTBEAT_SECONDS", "60"))
+HEARTBEAT_ON = os.getenv("KAMIL_HEARTBEAT", "1") == "1"
+_proactive_queue: list = []
+_proactive_lock = threading.Lock()
+_heartbeat_stop = threading.Event()
+
+def _heartbeat_tick():
+    from core import presence
+    from core import reminders as reminders_mod
+    from memory.thread_state import load_thread_state
+
+    now = _dt.now()
+    active_thread = None
+    try:
+        ts = load_thread_state()
+        if ts and getattr(ts, "is_active", False) and ts.message_count:
+            try:
+                lu = _dt.fromisoformat(ts.last_updated)
+            except Exception:
+                lu = None
+            active_thread = {
+                "id": ts.thread_id, "type": ts.thread_type,
+                "focus": ts.current_focus or ts.root_issue,
+                "last_updated": lu, "message_count": ts.message_count,
+            }
+    except Exception:
+        pass
+
+    intent = presence.evaluate(
+        now,
+        active_thread=active_thread,
+        due_reminders=reminders_mod.due_reminders(now),
+        last_proactive=presence.get_last_proactive(),
+        delivered_triggers=presence.get_delivered_triggers(),
+    )
+    if not intent:
+        return
+
+    text = kamil.proactive_message(intent.reason, intent.text)
+    with _proactive_lock:
+        _proactive_queue.append({"text": text, "kind": intent.kind, "ts": now.isoformat()})
+    if intent.kind == "reminder" and intent.payload.get("reminder_id"):
+        reminders_mod.mark_fired(intent.payload["reminder_id"])
+    presence.record_proactive(intent, now)
+    print(f"[heartbeat] proactive ({intent.kind}): {text[:70]}")
+
+def _heartbeat_loop():
+    while not _heartbeat_stop.is_set():
+        try:
+            _heartbeat_tick()
+        except Exception as e:
+            print(f"[heartbeat] tick error: {e}")
+        _heartbeat_stop.wait(HEARTBEAT_SECONDS)
+
+
 @asynccontextmanager
 async def lifespan(app):
     indexer.start_watching()
+    if HEARTBEAT_ON:
+        threading.Thread(target=_heartbeat_loop, daemon=True).start()
+        print(f"[heartbeat] presence loop started ({HEARTBEAT_SECONDS}s)")
     yield
+    _heartbeat_stop.set()
     indexer.stop_watching()
 
 app = FastAPI(lifespan=lifespan)
@@ -149,6 +212,18 @@ async def index():
     html_path = os.path.join(os.path.dirname(__file__), "index.html")
     with open(html_path, "r") as f:
         return HTMLResponse(f.read())
+
+@app.get("/presence")
+async def presence_poll():
+    """The UI polls this; returns (and clears) any proactive messages Kamil queued."""
+    with _proactive_lock:
+        msgs = _proactive_queue[:]
+        _proactive_queue.clear()
+    if msgs:
+        for m in msgs:
+            kamil.history.append({"role": "assistant", "content": m["text"]})
+        save_history(kamil.history)
+    return {"messages": msgs}
 
 @app.get("/projects")
 async def list_projects():

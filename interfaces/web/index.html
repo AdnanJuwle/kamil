@@ -1027,6 +1027,12 @@
             return content;
         }
 
+        // Kamil reaching out unprompted (from the presence heartbeat).
+        function appendProactive(text) {
+            appendSystem('kamil reached out');
+            appendAssistant(text, false);
+        }
+
         function escapeHtml(text) {
             return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
         }
@@ -1322,7 +1328,18 @@
             }
         }
 
+        // Poll for proactive messages from Kamil's heartbeat.
+        async function pollPresence() {
+            try {
+                const res = await fetch('/presence');
+                if (!res.ok) return;
+                const data = await res.json();
+                (data.messages || []).forEach(m => appendProactive(m.text));
+            } catch { }
+        }
+
         loadProjects().then(restoreSession);
+        setInterval(pollPresence, 30000);
     </script>
 </body>
 </html>

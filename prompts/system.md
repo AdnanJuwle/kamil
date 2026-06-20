@@ -154,6 +154,7 @@ Available tools:
 - shell(command: string, cwd?: string, timeout?: int): Run a shell command
 - search_files(directory: string, pattern: string): Find files by pattern
 - create_task(title: string, description?: string, project?: string): Create a task
+- remind(text: string, at?: string, in_minutes?: int): Set a reminder Kamil surfaces when due
 - system_info(): Get CPU, RAM, disk usage
 
 Rules:

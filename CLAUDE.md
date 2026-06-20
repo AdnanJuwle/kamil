@@ -70,7 +70,7 @@ Models are `*.gguf` files in `C:\kamil\models\` (gitignored, large). Each role i
 | **Voice** | 8084 | `gemma4-e4b-q4` | Electron (+30s) | Quick spoken replies + handoff decision |
 | **Heavy** | 8086 | — | (configured, currently unused) | `HEAVY_SERVER_URL` reserved |
 
-Ports/URLs are overridable via env vars read in `core/config.py` (`KAMIL_SERVER_URL`, `KAMIL_EXECUTOR_URL`, `KAMIL_VOICE_URL`, `KAMIL_HEAVY_URL`, `KAMIL_TIMEOUT`, `KAMIL_TEMPERATURE`, `KAMIL_MAX_TOKENS`). The `models/` dir holds several extra GGUFs (qwen-coder, qwen-32b, claude-distills) not wired into the default routing — they're available for experimentation.
+Ports/URLs are overridable via env vars read in `core/config.py` (`KAMIL_SERVER_URL`, `KAMIL_VOICE_URL`, `KAMIL_HEAVY_URL`, `KAMIL_TIMEOUT`, `KAMIL_TEMPERATURE`, `KAMIL_MAX_TOKENS`). Heartbeat: `KAMIL_HEARTBEAT` (0 to disable), `KAMIL_HEARTBEAT_SECONDS`. The `models/` dir holds several extra GGUFs (qwen-coder, qwen-32b, claude-distills) not wired into the default routing — they're available for experimentation.
 
 ## Architecture
 
@@ -105,6 +105,11 @@ Electron shell (C:\kamil-app)
   - `_build_messages` is where everything converges: identity, threads, long-term memories, the daily **schedule**, religious context, code/domain context, eMCP context all get layered into the system prompt. Read this method first when debugging "why did Kamil say X."
 - `config.py` — URLs, defaults, loads `prompts/system.md` as `KAMIL_SYSTEM_PROMPT`.
 - `council.py` / `council_loader.py` — Analyst (8080) → Devil's Advocate (8081) → Synthesizer (8082). The loader spawns the two extra servers on demand.
+- `schedule.py` — Adnan's daily/weekly schedule as data: `current_block(now)`, `is_quiet_hours(now)`, `schedule_context()`. Single source of truth (the orchestrator and presence both read it).
+- `presence.py` — **Kamil's heartbeat / proactive presence.** `evaluate(now, …)` is a PURE decision core: given the time, the active thread, due reminders, and cooldown/dedupe state, it returns at most one `ProactiveIntent` (a reminder, a dormant-thread check-in, or an off-by-default schedule nudge). Guarantees: due reminders bypass quiet hours/cooldown; everything else is suppressed during quiet hours and within a 45-min cooldown; every trigger de-dupes by key. Also `temporal_note()` (folds "it's been X since you last spoke" into reactive replies) and state persistence (`data/presence_state.json`). Delivery is the backend's job (see below).
+- `reminders.py` — user-set reminders (`data/reminders.json`), backing the `remind` tool and fired by the heartbeat.
+
+**The heartbeat** lives in `interfaces/web/app.py`: a daemon thread (`_heartbeat_loop`, every `KAMIL_HEARTBEAT_SECONDS`=60) gathers state, calls `presence.evaluate`, and — if something's worth saying — has the orchestrator phrase it in Kamil's voice (`orchestrator.proactive_message`, falls back to a template if the model is down) and queues it. The web UI polls `GET /presence` every 30s and renders queued lines as "kamil reached out" bubbles. Disable with `KAMIL_HEARTBEAT=0`.
 
 ### `memory/` — the "alive" core (most important subsystem)
 This is what separates Kamil from a stateless chatbot. Treat it carefully.

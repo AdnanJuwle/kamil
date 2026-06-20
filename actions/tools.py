@@ -279,6 +279,28 @@ def _create_task(params: dict) -> ToolResult:
         return ToolResult(success=False, error=str(e), tool="create_task", params=params)
 
 
+def _remind(params: dict) -> ToolResult:
+    """Set a reminder Kamil will surface when due. Give 'at' (ISO time) or 'in_minutes'."""
+    from datetime import datetime, timedelta
+    text = params.get("text", "").strip()
+    if not text:
+        return ToolResult(success=False, error="reminder text is required", tool="remind", params=params)
+    try:
+        if params.get("at"):
+            due = datetime.fromisoformat(params["at"])
+        elif params.get("in_minutes") is not None:
+            due = datetime.now() + timedelta(minutes=int(params["in_minutes"]))
+        else:
+            return ToolResult(success=False, error="provide 'at' (ISO 8601) or 'in_minutes'",
+                              tool="remind", params=params)
+    except Exception as e:
+        return ToolResult(success=False, error=f"bad time: {e}", tool="remind", params=params)
+    from core.reminders import add_reminder
+    r = add_reminder(text, due)
+    return ToolResult(success=True, output={"id": r["id"], "text": r["text"], "due": r["due"]},
+                      tool="remind", params=params)
+
+
 def _get_system_info(params: dict) -> ToolResult:
     import platform
     try:
@@ -375,6 +397,17 @@ TOOLS: dict[str, Tool] = {
         params=[],
         permission=Permission.AUTO,
         execute=_get_system_info
+    ),
+    "remind": Tool(
+        name="remind",
+        description="Set a reminder Kamil will bring up when due (give 'at' as ISO time, or 'in_minutes')",
+        params=[
+            ToolParam("text", "string", required=True, description="What to remind about"),
+            ToolParam("at", "string", required=False, description="ISO 8601 datetime, e.g. 2026-06-21T15:00"),
+            ToolParam("in_minutes", "int", required=False, description="Minutes from now"),
+        ],
+        permission=Permission.AUTO,
+        execute=_remind
     ),
 }
 

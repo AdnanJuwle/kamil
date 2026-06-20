@@ -132,59 +132,29 @@ class Orchestrator:
         save_history(self.history)
 
     def _get_schedule_context(self) -> str:
-        from datetime import datetime
-        now = datetime.now()
-        hour = now.hour
-        minute = now.minute
-        total = hour * 60 + minute
-        weekday = now.weekday()
+        from core.schedule import schedule_context
+        return schedule_context()
 
-        blocks = [
-            (0,   360,  "sleep hours"),
-            (360, 390,  "wake up and get ready"),
-            (390, 480,  "gym"),
-            (480, 510,  "home, shower, breakfast"),
-            (510, 540,  "morning wind-down — rest, not productive"),
-            (540, 690,  "deep work block 1"),
-            (690, 720,  "break — walk, snack, away from screen"),
-            (720, 840,  "deep work block 2"),
-            (840, 900,  "lunch and rest"),
-            (900, 960,  "applications block — Upwork, LinkedIn, Wellfound"),
-            (960, 1005, "exam prep"),
-            (1005,1035, "leetcode — one easy problem, 30 min max"),
-            (1035,1080, "free time"),
-            (1080,1200, "gaming or entertainment — guilt free"),
-            (1200,1260, "dinner"),
-            (1260,1305, "optional light evening block"),
-            (1305,1440, "wind down, sleep by 11pm"),
-        ]
-
-        current_block = "unscheduled"
-        for start, end, label in blocks:
-            if start <= total < end:
-                current_block = label
-                break
-
-        weekly = {
-            0: "Monday — deploy something + MLOps course",
-            1: "Tuesday — MLOps course + PRANA work",
-            2: "Wednesday — build day + Kamil work",
-            3: "Thursday — MLOps course + deploy or build",
-            4: "Friday — PRANA + Twitter build series doc",
-            5: "Saturday — full project day, extended gaming evening",
-            6: "Sunday — weekly review + rest, no work after 12pm",
-        }
-
-        day_focus = weekly.get(weekday, "")
-        day_name = now.strftime("%A")
-        time_str = now.strftime("%I:%M %p")
-        date_str = now.strftime("%B %d, %Y")
-
-        return (
-            f"Current time: {day_name}, {date_str}, {time_str} IST\n"
-            f"Current block: {current_block}\n"
-            f"Today's focus: {day_focus}"
+    def proactive_message(self, reason: str, fallback: str) -> str:
+        """Phrase an unprompted ping in Kamil's voice. Falls back to `fallback`
+        (the engine's templated text) if the model is unavailable."""
+        system = (
+            self.system_prompt +
+            "\n\nYou are reaching out to Adnan UNPROMPTED right now — he did not just "
+            f"message you. Reason: {reason}\n"
+            "Say ONE short, natural line, like a friend pinging him. No greeting "
+            "boilerplate, no markdown, no lists. Max two sentences."
         )
+        try:
+            line = self.client.chat(
+                [{"role": "system", "content": system},
+                 {"role": "user", "content": "(reach out now)"}],
+                temperature=0.7, max_tokens=80,
+            )
+            line = (line or "").strip().strip('"')
+            return line or fallback
+        except Exception:
+            return fallback
 
     def _build_messages(self, user_message: str) -> list[dict]:
         greeting_patterns = ["hello", "hi", "hey", "good morning", "good evening", 
@@ -233,6 +203,18 @@ class Orchestrator:
         system += f"\n\n## SCHEDULE\n{schedule_ctx}"
         system += "\nIf Adnan is chatting during a deep work block, gently acknowledge it. Don't lecture, just be aware."
         system += "\nWhen mentioning schedule — be direct, no motivational padding, no 'optimal productivity' language."
+
+        # Temporal continuity: note how long since Adnan last spoke, then stamp this
+        # interaction so the heartbeat knows he's present.
+        try:
+            from core import presence
+            from datetime import datetime as _dt
+            note = presence.temporal_note(presence.get_last_interaction(), _dt.now())
+            if note:
+                system += f"\n\n{note}"
+            presence.record_interaction()
+        except Exception:
+            pass
 
         if is_religious_query(user_message):
             religious_results = query_religious(user_message, n_results=3)

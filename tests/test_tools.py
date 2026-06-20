@@ -80,6 +80,25 @@ def test_create_task_calls_backend(monkeypatch):
     assert captured["project"] == "kamil"
 
 
+# ── remind tool ───────────────────────────────────────────────────
+
+def test_remind_in_minutes(monkeypatch, tmp_path):
+    import core.reminders as rem
+    monkeypatch.setattr(rem, "REMINDERS_PATH", str(tmp_path / "reminders.json"))
+    res = tools.execute_tool("remind", {"text": "stand up", "in_minutes": 30})
+    assert res.success is True
+    assert res.output["text"] == "stand up"
+    assert len(rem.list_reminders()) == 1
+
+
+def test_remind_requires_a_time(monkeypatch, tmp_path):
+    import core.reminders as rem
+    monkeypatch.setattr(rem, "REMINDERS_PATH", str(tmp_path / "reminders.json"))
+    res = tools.execute_tool("remind", {"text": "no time given"})
+    assert res.success is False
+    assert "in_minutes" in res.error or "at" in res.error
+
+
 # ── permission mapping ────────────────────────────────────────────
 
 def test_permission_levels():
