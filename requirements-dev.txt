@@ -1,0 +1,9 @@
+# Kamil — development / test dependencies. Install on top of requirements.txt:
+#     python -m pip install -r requirements-dev.txt
+#
+# Run the suite:
+#     python -m pytest            (or: python -m pytest -q)
+#     python -m pytest --cov=memory --cov=core --cov=code13
+
+pytest==9.1.1
+pytest-cov==7.0.0

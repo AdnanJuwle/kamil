@@ -10,6 +10,7 @@ Permission levels:
 import os
 import json
 import subprocess
+from pathlib import Path
 from dataclasses import dataclass
 from typing import Any, Callable, Optional
 from enum import Enum
@@ -19,6 +20,65 @@ class Permission(str, Enum):
     AUTO = "auto"
     CONFIRM = "confirm"
     DENY = "deny"
+
+
+# ── Guardrails ─────────────────────────────────────────────────────
+# Reads are allowed broadly; WRITES and SHELL are fenced to these roots so an
+# agent loop can't clobber system files or Kamil's own code by accident.
+# Override with KAMIL_WRITE_ROOTS (semicolon-separated absolute paths).
+_DEFAULT_WRITE_ROOTS = r"C:\kamil\workspace;C:\Users\adnan\Documents\repos"
+
+# First-token commands that are never run, plus dangerous substrings.
+_BLOCKED_COMMANDS = {
+    "rm", "rmdir", "del", "rd", "format", "shutdown", "reboot",
+    "mkfs", "dd", "fdisk", "diskpart", "deltree", "erase",
+}
+_BLOCKED_SUBSTRINGS = (
+    "rm -rf", "rm -r", "del /", "rmdir /s", "format ", ":\\ /q",
+    "> /dev/", "shutdown", "mkfs", "fdisk",
+)
+
+
+def _write_roots() -> list[Path]:
+    raw = os.getenv("KAMIL_WRITE_ROOTS", _DEFAULT_WRITE_ROOTS)
+    roots = []
+    for r in raw.split(";"):
+        r = r.strip()
+        if not r:
+            continue
+        try:
+            roots.append(Path(r).resolve())
+        except Exception:
+            pass
+    return roots
+
+
+def _within_write_roots(path: str) -> bool:
+    try:
+        p = Path(path).resolve()
+    except Exception:
+        return False
+    for root in _write_roots():
+        try:
+            p.relative_to(root)
+            return True
+        except ValueError:
+            continue
+    return False
+
+
+def _command_allowed(command: str) -> tuple[bool, str]:
+    stripped = command.strip()
+    if not stripped:
+        return False, "empty command"
+    first = stripped.split()[0].lower().lstrip('"\'').split("\\")[-1].split("/")[-1]
+    if first in _BLOCKED_COMMANDS:
+        return False, f"command '{first}' is blocked for safety"
+    low = stripped.lower()
+    for bad in _BLOCKED_SUBSTRINGS:
+        if bad in low:
+            return False, f"command contains blocked pattern '{bad.strip()}'"
+    return True, ""
 
 
 @dataclass
@@ -78,6 +138,12 @@ def _read_file(params: dict) -> ToolResult:
 def _write_file(params: dict) -> ToolResult:
     path = params["path"]
     content = params["content"]
+    if not _within_write_roots(path):
+        return ToolResult(
+            success=False,
+            error=f"refused: '{path}' is outside the allowed write roots ({'; '.join(str(r) for r in _write_roots())})",
+            tool="write_file", params=params
+        )
     try:
         os.makedirs(os.path.dirname(path), exist_ok=True) if os.path.dirname(path) else None
         with open(path, "w", encoding="utf-8") as f:
@@ -90,6 +156,39 @@ def _write_file(params: dict) -> ToolResult:
         )
     except Exception as e:
         return ToolResult(success=False, error=str(e), tool="write_file", params=params)
+
+
+def _edit_file(params: dict) -> ToolResult:
+    """Surgical, unambiguous replace — the reliable way to change code."""
+    path = params["path"]
+    old = params["old"]
+    new = params["new"]
+    if not _within_write_roots(path):
+        return ToolResult(
+            success=False,
+            error=f"refused: '{path}' is outside the allowed write roots",
+            tool="edit_file", params=params
+        )
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
+            original = f.read()
+    except Exception as e:
+        return ToolResult(success=False, error=str(e), tool="edit_file", params=params)
+    occurrences = original.count(old)
+    if occurrences == 0:
+        return ToolResult(success=False, error="target text not found — no change made",
+                          tool="edit_file", params=params)
+    if occurrences > 1:
+        return ToolResult(success=False,
+                          error=f"target text appears {occurrences} times — too ambiguous; include more surrounding context",
+                          tool="edit_file", params=params)
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(original.replace(old, new, 1))
+        return ToolResult(success=True, output={"path": path, "replaced": 1},
+                          tool="edit_file", params=params)
+    except Exception as e:
+        return ToolResult(success=False, error=str(e), tool="edit_file", params=params)
 
 
 def _list_directory(params: dict) -> ToolResult:
@@ -117,6 +216,9 @@ def _shell(params: dict) -> ToolResult:
     command = params["command"]
     cwd = params.get("cwd", "C:\\kamil")
     timeout = params.get("timeout", 30)
+    allowed, reason = _command_allowed(command)
+    if not allowed:
+        return ToolResult(success=False, error=f"refused: {reason}", tool="shell", params=params)
     try:
         result = subprocess.run(
             command,
@@ -161,10 +263,8 @@ def _search_files(params: dict) -> ToolResult:
 
 def _create_task(params: dict) -> ToolResult:
     try:
-        import sys
-        sys.path.insert(0, r'C:\kamil')
-        from actions.tasks import add_task
-        task = add_task(
+        from actions.tasks import create_task
+        task = create_task(
             title=params["title"],
             description=params.get("description", ""),
             project=params.get("project", "")
@@ -216,6 +316,17 @@ TOOLS: dict[str, Tool] = {
         ],
         permission=Permission.CONFIRM,
         execute=_write_file
+    ),
+    "edit_file": Tool(
+        name="edit_file",
+        description="Replace an exact, unique snippet in a file (surgical edit). Preferred over write_file for changing existing files.",
+        params=[
+            ToolParam("path", "string", required=True, description="Absolute file path"),
+            ToolParam("old", "string", required=True, description="Exact existing text to replace (must be unique in the file)"),
+            ToolParam("new", "string", required=True, description="Replacement text")
+        ],
+        permission=Permission.CONFIRM,
+        execute=_edit_file
     ),
     "list_directory": Tool(
         name="list_directory",
@@ -280,6 +391,18 @@ def get_tool_schemas() -> str:
     return "\n".join(schemas)
 
 
+def get_tools_for_prompt() -> str:
+    """Tool list + permission, for injecting into an agent system prompt."""
+    lines = []
+    for tool in TOOLS.values():
+        params_desc = ", ".join(
+            f"{p.name}: {p.type}{'?' if not p.required else ''}" for p in tool.params
+        )
+        gate = "auto" if tool.permission == Permission.AUTO else "needs approval"
+        lines.append(f"- {tool.name}({params_desc}) [{gate}]: {tool.description}")
+    return "\n".join(lines)
+
+
 def validate_tool_call(tool_name: str, params: dict) -> tuple[bool, str]:
     """Validate a tool call against its schema."""
     if tool_name not in TOOLS:
@@ -313,21 +436,51 @@ def requires_confirmation(tool_name: str) -> bool:
 
 def parse_tool_calls(response: str) -> list[dict]:
     """
-    Parse tool calls from model response.
-    Model should output JSON blocks like:
-```tool
-    {"tool": "read_file", "params": {"path": "C:\\file.py"}}
-```
+    Parse tool calls from a model response. Tolerant of how the model fences them:
+    accepts ```tool / ```json / plain ``` blocks, and bare JSON objects that
+    carry a "tool" key. Each accepted call is normalised to {"tool", "params"}.
     """
     import re
-    calls = []
-    pattern = r'```tool\s*\n(.*?)\n```'
-    matches = re.findall(pattern, response, re.DOTALL)
-    for match in matches:
+    calls: list[dict] = []
+    seen: set[str] = set()
+
+    def _accept(raw: str):
+        raw = raw.strip()
+        if not raw:
+            return
         try:
-            call = json.loads(match.strip())
-            if "tool" in call and "params" in call:
-                calls.append(call)
+            call = json.loads(raw)
         except json.JSONDecodeError:
-            pass
+            return
+        if not isinstance(call, dict) or "tool" not in call:
+            return
+        call.setdefault("params", {})
+        if not isinstance(call["params"], dict):
+            return
+        key = json.dumps(call, sort_keys=True)
+        if key in seen:
+            return
+        seen.add(key)
+        calls.append({"tool": call["tool"], "params": call["params"]})
+
+    # 1) fenced code blocks: ```tool / ```json / ```
+    for block in re.findall(r'```(?:tool|json)?\s*\n(.*?)```', response, re.DOTALL):
+        _accept(block)
+
+    # 2) bare top-level JSON objects that mention a tool (balanced-brace scan)
+    if not calls:
+        for m in re.finditer(r'\{', response):
+            start = m.start()
+            depth = 0
+            for i in range(start, len(response)):
+                c = response[i]
+                if c == '{':
+                    depth += 1
+                elif c == '}':
+                    depth -= 1
+                    if depth == 0:
+                        candidate = response[start:i + 1]
+                        if '"tool"' in candidate:
+                            _accept(candidate)
+                        break
     return calls

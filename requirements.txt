@@ -1,0 +1,40 @@
+# Kamil — Python backend dependencies (Python 3.13, venv313)
+#
+# This is the curated, human-readable list of DIRECT dependencies, pinned to the
+# versions currently running in venv313. For a fully reproducible environment
+# (every transitive dependency pinned), install from requirements.lock.txt instead:
+#
+#     python -m pip install -r requirements.lock.txt
+#
+# Do NOT install these into Isaac Sim's bundled Python — that is a separate env
+# (see the PRANA project). This file is for Kamil's venv313 only.
+
+# ── Web backend ────────────────────────────────────────────────────
+fastapi==0.136.1
+uvicorn==0.46.0
+pydantic==2.13.3
+httpx==0.28.1                  # client to the llama.cpp model servers
+
+# ── Retrieval / vector store ───────────────────────────────────────
+chromadb==1.5.8
+sentence-transformers==5.4.1   # all-MiniLM-L6-v2 embeddings
+numpy==2.4.4
+scikit-learn==1.8.0
+
+# ── Code indexing ──────────────────────────────────────────────────
+tree-sitter==0.25.2
+tree-sitter-python==0.25.0
+tree-sitter-cpp==0.23.4
+pypdf==6.10.2                  # domain / religious PDF ingestion
+watchdog==6.0.0                # filesystem watcher → auto re-index
+
+# ── Voice (STT / TTS / speaker ID) ─────────────────────────────────
+openai-whisper==20250625       # imported as `whisper`
+torch==2.11.0                  # whisper backend
+kokoro-onnx==0.5.0             # TTS
+onnxruntime==1.25.1            # kokoro backend
+soundfile==0.13.1
+librosa==0.11.0
+Resemblyzer==0.1.4             # speaker voiceprints (succession second factor)
+
+# ffmpeg must also be on PATH (used for webm→wav in transcription/enrollment).

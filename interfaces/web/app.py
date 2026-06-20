@@ -315,6 +315,15 @@ async def chat_agentic(message: Message):
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
     )
 
+@app.post("/chat_agent")
+async def chat_agent(message: Message):
+    """Agentic tool-use loop — streams structured events (tool calls + results)."""
+    return StreamingResponse(
+        generate_agent_sse(message.content),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
+    )
+
 @app.get("/time")
 async def current_time():
     from datetime import datetime
@@ -589,6 +598,14 @@ async def transcribe(request: Request):
             set_current_speaker(speaker_result)
             print(f"[transcribe] Speaker: {speaker_result.speaker_name} "
                   f"({speaker_result.trust_level}, conf={speaker_result.confidence:.2f})")
+            # Sealed succession directive — the only place it can activate.
+            # Both factors (the heir's verified voice + the spoken word) come
+            # from this single audio clip, so they cannot be assembled apart.
+            try:
+                from core.succession import scan_spoken
+                scan_spoken(text, speaker_result)
+            except Exception as _se:
+                print(f"[transcribe] succession scan skipped: {_se}")
         except Exception as e:
             print(f"[transcribe] Speaker ID failed: {e}")
 
@@ -631,6 +648,16 @@ def generate_agentic_sse(user_message: str):
         print(f"[agentic_sse] Error: {e}")
         error = json.dumps({"error": str(e)})
         yield f"data: {error}\n\n"
+        yield "data: [DONE]\n\n"
+
+def generate_agent_sse(user_message: str):
+    try:
+        for event in kamil.chat_agent(user_message):
+            yield f"data: {json.dumps(event)}\n\n"
+        yield "data: [DONE]\n\n"
+    except Exception as e:
+        print(f"[agent_sse] Error: {e}")
+        yield f"data: {json.dumps({'type': 'error', 'error': str(e)})}\n\n"
         yield "data: [DONE]\n\n"
 
 def generate_action_sse(user_message: str):

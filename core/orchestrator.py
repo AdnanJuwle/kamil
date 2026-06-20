@@ -400,6 +400,19 @@ class Orchestrator:
         except Exception:
             pass
 
+        # Sealed succession directive. Activation is voice-only (the heir must
+        # SAY the word — handled in the /transcribe path); here we only inject
+        # whatever is already in force. scan_typed_test is a no-op unless
+        # KAMIL_SUCCESSION_TEST=1, letting Adnan dry-run it from text.
+        try:
+            from core.succession import scan_typed_test, succession_context
+            scan_typed_test(user_message)
+            succ = succession_context()
+            if succ:
+                system += f"\n\n{succ}"
+        except Exception:
+            pass
+
         messages = [{"role": "system", "content": system}] + context_messages
         messages.append({"role": "user", "content": user_message})
         return messages
@@ -450,6 +463,45 @@ class Orchestrator:
             "auto_executed": auto_executed,
             "pending_confirmation": pending_confirmation
         }
+
+    def chat_agent(self, user_message: str, max_iters: int = 6) -> Generator[dict, None, None]:
+        """
+        Agentic tool-use loop: the model can call tools, see their results, and
+        continue across multiple steps until the task is done. Yields structured
+        events (see actions/agent.py). Mutating tools pause for confirmation.
+        """
+        from actions.agent import iter_agent
+        from actions.tools import get_tools_for_prompt
+
+        self._maybe_compress()
+        messages = self._build_messages(user_message)
+        messages[0]["content"] += (
+            "\n\n## AGENT MODE\nYou can use tools across multiple steps. Available tools:\n"
+            + get_tools_for_prompt()
+            + "\n\nTo call a tool, output a fenced block exactly like:\n"
+            '```tool\n{"tool": "read_file", "params": {"path": "C:\\\\path\\\\file.py"}}\n```\n'
+            "After each tool runs you will see its result, then call more tools or give "
+            "your final answer with NO tool block when finished. Tools marked "
+            "[needs approval] will pause for the user. Prefer edit_file over write_file "
+            "for changing existing files."
+        )
+
+        model_fn = lambda msgs: self.client.chat(msgs)
+        final_text = ""
+        terminal = "done"
+        for event in iter_agent(model_fn, messages, max_iters=max_iters):
+            if event.get("type") in ("text", "done", "max_iterations") and event.get("text"):
+                final_text = event["text"]
+            terminal = event.get("type", terminal)
+            yield event
+
+        # Persist the turn once it completes (not while paused for confirmation).
+        if terminal in ("done", "max_iterations") and final_text:
+            self.history.append({"role": "user", "content": user_message})
+            self.history.append({"role": "assistant", "content": final_text})
+            self.ctx.add_message({"role": "user", "content": user_message})
+            self.ctx.add_message({"role": "assistant", "content": final_text})
+            save_history(self.history)
 
     def chat_agentic(self, user_message: str, max_iterations: int = 3) -> Generator[str, None, None]:
         self._maybe_compress()

@@ -1,6 +1,6 @@
 from models.client import LlamaClient
 from core.config import DEFAULT_TEMPERATURE
-from core.council_loader import load_council, unload_council
+from core.council_loader import load_council, mark_activity
 
 ANALYST_URL = "http://127.0.0.1:8080"
 ADVOCATE_URL = "http://127.0.0.1:8081"
@@ -80,7 +80,9 @@ class Council:
             "synthesizer": synthesizer_output,
             "final": synthesizer_output
         }
-    
-        #unload_council()  # free VRAM after council finishes
+
+        # Keep the council warm for follow-up deliberations; the idle timer in
+        # council_loader frees the VRAM once no council runs for a while.
+        mark_activity()
         return result
 
