@@ -130,6 +130,57 @@ def test_model_error_is_reported():
     assert "server down" in events[-1]["error"]
 
 
+def test_mixed_auto_and_confirm_runs_auto_then_pauses():
+    # One step requests an auto tool AND a confirm tool: auto runs, then pause.
+    model, result = run([
+        '```tool\n{"tool": "read_file", "params": {"path": "a"}}\n```\n'
+        '```tool\n{"tool": "shell", "params": {"command": "echo hi"}}\n```',
+    ])
+    assert result["status"] == "awaiting_confirmation"
+    assert [p["tool"] for p in result["pending"]] == ["shell"]
+    # the auto read_file DID execute...
+    assert any(e["type"] == "tool_result" and e["tool"] == "read_file" for e in result["events"])
+    # ...and its result is preserved in the resumable transcript.
+    assert any("[tool results]" in m["content"] for m in result["transcript"])
+
+
+def test_full_pause_execute_resume_cycle():
+    """Exactly what POST /agent_resume does: pause -> run approved tools -> resume."""
+    model = FakeModel([
+        '```tool\n{"tool": "write_file", "params": {"path": "a.txt", "content": "hi"}}\n```',
+        "Wrote the file. Done.",
+    ])
+    r1 = agent.run_agent(model, [{"role": "user", "content": "write a.txt"}],
+                         executor=fake_executor, needs_confirm=needs_confirm)
+    assert r1["status"] == "awaiting_confirmation"
+
+    # endpoint approves + executes the pending tools
+    executed = [(c, fake_executor(c["tool"], c["params"])) for c in r1["pending"]]
+    events = list(agent.resume_agent(
+        model, r1["transcript"], executed,
+        executor=fake_executor, needs_confirm=needs_confirm,
+    ))
+    assert events[-1]["type"] == "done"
+    assert "Done" in events[-1]["text"]
+
+
+def test_resume_with_denial_continues():
+    model = FakeModel([
+        '```tool\n{"tool": "shell", "params": {"command": "echo hi"}}\n```',
+        "Okay, I won't run it then.",
+    ])
+    r1 = agent.run_agent(model, [{"role": "user", "content": "run echo"}],
+                         executor=fake_executor, needs_confirm=needs_confirm)
+    # user denies: endpoint feeds back a denial result
+    executed = [(c, {"success": False, "error": "denied by user", "tool": c["tool"]})
+                for c in r1["pending"]]
+    events = list(agent.resume_agent(
+        model, r1["transcript"], executed,
+        executor=fake_executor, needs_confirm=needs_confirm,
+    ))
+    assert events[-1]["type"] == "done"
+
+
 # ── strip_tool_blocks ─────────────────────────────────────────────
 
 def test_strip_tool_blocks_removes_fences_and_bare_json():

@@ -503,6 +503,32 @@ class Orchestrator:
             self.ctx.add_message({"role": "assistant", "content": final_text})
             save_history(self.history)
 
+    def resume_agent(self, transcript: list[dict], executed: list, user_message: str = "",
+                     max_iters: int = 6) -> Generator[dict, None, None]:
+        """
+        Continue an agent loop that paused for confirmation. `executed` is a list
+        of (call, result_dict) the caller ran after the user approved/denied them.
+        Yields the same event stream as chat_agent.
+        """
+        from actions.agent import resume_agent as _resume
+
+        model_fn = lambda msgs: self.client.chat(msgs)
+        final_text = ""
+        terminal = "done"
+        for event in _resume(model_fn, transcript, executed, max_iters=max_iters):
+            if event.get("type") in ("text", "done", "max_iterations") and event.get("text"):
+                final_text = event["text"]
+            terminal = event.get("type", terminal)
+            yield event
+
+        if terminal in ("done", "max_iterations") and final_text:
+            label = user_message or "[agent task]"
+            self.history.append({"role": "user", "content": label})
+            self.history.append({"role": "assistant", "content": final_text})
+            self.ctx.add_message({"role": "user", "content": label})
+            self.ctx.add_message({"role": "assistant", "content": final_text})
+            save_history(self.history)
+
     def chat_agentic(self, user_message: str, max_iterations: int = 3) -> Generator[str, None, None]:
         self._maybe_compress()
         intent = self._classify_intent(user_message)

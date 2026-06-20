@@ -52,6 +52,10 @@ class ToolExecute(BaseModel):
     tool: str
     params: dict
 
+class AgentResume(BaseModel):
+    run_id: str
+    approvals: list[bool] = []   # one per pending tool, in order; True = approve
+
 
 _kokoro = None
 
@@ -320,6 +324,35 @@ async def chat_agent(message: Message):
     """Agentic tool-use loop — streams structured events (tool calls + results)."""
     return StreamingResponse(
         generate_agent_sse(message.content),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
+    )
+
+@app.post("/agent_resume")
+async def agent_resume(data: AgentResume):
+    """Resume a paused agent run after the user approves/denies its pending tools."""
+    run = _agent_runs.pop(data.run_id, None)
+    if not run:
+        async def _gone():
+            yield f"data: {json.dumps({'type': 'error', 'error': 'unknown or expired run_id'})}\n\n"
+            yield "data: [DONE]\n\n"
+        return StreamingResponse(_gone(), media_type="text/event-stream")
+
+    from actions.tools import execute_tool
+    executed = []
+    for i, call in enumerate(run["pending"]):
+        approved = data.approvals[i] if i < len(data.approvals) else False
+        if approved:
+            res = execute_tool(call["tool"], call["params"]).to_dict()
+        else:
+            res = {"success": False, "error": "denied by user", "tool": call["tool"]}
+        executed.append((call, res))
+
+    return StreamingResponse(
+        _forward_agent_events(
+            kamil.resume_agent(run["transcript"], executed, run["user_message"]),
+            run["user_message"],
+        ),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
     )
@@ -650,15 +683,34 @@ def generate_agentic_sse(user_message: str):
         yield f"data: {error}\n\n"
         yield "data: [DONE]\n\n"
 
-def generate_agent_sse(user_message: str):
+import uuid
+# Paused agent runs awaiting user confirmation, keyed by run_id. The transcript
+# is held server-side so it never round-trips through the browser.
+_agent_runs: dict = {}
+
+def _forward_agent_events(event_iter, user_message: str = ""):
+    """Stream agent events as SSE, stashing any pause transcript server-side and
+    sending the client only a run_id + the pending tool calls."""
     try:
-        for event in kamil.chat_agent(user_message):
-            yield f"data: {json.dumps(event)}\n\n"
+        for event in event_iter:
+            if event.get("type") == "awaiting_confirmation":
+                run_id = uuid.uuid4().hex[:12]
+                _agent_runs[run_id] = {
+                    "transcript": event.get("transcript", []),
+                    "pending": event.get("pending", []),
+                    "user_message": user_message,
+                }
+                yield f"data: {json.dumps({'type': 'awaiting_confirmation', 'run_id': run_id, 'pending': event.get('pending', [])})}\n\n"
+            else:
+                yield f"data: {json.dumps(event)}\n\n"
         yield "data: [DONE]\n\n"
     except Exception as e:
         print(f"[agent_sse] Error: {e}")
         yield f"data: {json.dumps({'type': 'error', 'error': str(e)})}\n\n"
         yield "data: [DONE]\n\n"
+
+def generate_agent_sse(user_message: str):
+    return _forward_agent_events(kamil.chat_agent(user_message), user_message)
 
 def generate_action_sse(user_message: str):
     try:

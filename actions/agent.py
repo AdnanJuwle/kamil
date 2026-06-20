@@ -117,24 +117,26 @@ def iter_agent(
             yield {"type": "done", "text": text}
             return
 
-        # If any requested tool needs approval, pause the whole step.
+        auto = [c for c in calls if not needs_confirm(c["tool"])]
         pending = [c for c in calls if needs_confirm(c["tool"])]
-        if pending:
-            yield {
-                "type": "awaiting_confirmation",
-                "pending": pending,
-                "transcript": messages + [{"role": "assistant", "content": resp}],
-            }
-            return
 
-        # Execute auto tools and feed results back.
+        # Run auto tools first so their work isn't lost if we then pause.
         results: list[tuple[dict, dict]] = []
-        for c in calls:
+        for c in auto:
             yield {"type": "tool_call", "tool": c["tool"], "params": c["params"]}
             res = _as_dict(executor(c["tool"], c["params"]))
             yield {"type": "tool_result", "tool": c["tool"],
                    "success": bool(res.get("success")), "result": res}
             results.append((c, res))
+
+        # Any approval-gated tools pause the loop with a resumable transcript
+        # that already includes the auto results from this step.
+        if pending:
+            paused = messages + [{"role": "assistant", "content": resp}]
+            if results:
+                paused = paused + [{"role": "user", "content": _format_results(results, max_result_chars)}]
+            yield {"type": "awaiting_confirmation", "pending": pending, "transcript": paused}
+            return
 
         messages.append({"role": "assistant", "content": resp})
         messages.append({"role": "user", "content": _format_results(results, max_result_chars)})

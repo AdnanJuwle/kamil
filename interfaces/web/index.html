@@ -715,8 +715,8 @@
         <div class="confirm-label">ACTION REQUIRES APPROVAL</div>
         <div class="confirm-detail" id="confirm-detail"></div>
         <div class="confirm-actions">
-            <button class="confirm-reject" onclick="rejectAction()">reject</button>
-            <button class="confirm-approve" onclick="approveAction()">approve</button>
+            <button class="confirm-reject" onclick="confirmReject()">reject</button>
+            <button class="confirm-approve" onclick="confirmApprove()">approve</button>
         </div>
     </div>
 
@@ -748,7 +748,7 @@
                 <button id="send-btn" onclick="sendMessage()">↑</button>
             </div>
         </div>
-        <div id="input-hint">enter to send · shift+enter for newline · <span>/council</span> for deliberation</div>
+        <div id="input-hint">enter to send · shift+enter for newline · <span>/council</span> deliberation · <span>/agent</span> tool use</div>
     </div>
 
     <script>
@@ -761,6 +761,7 @@
 
         let pendingActions = [];
         let currentActionIndex = 0;
+        let agentApprovalResolve = null;   // set while an agent run awaits approval
 
         // Voice variables
         let mediaRecorder = null;
@@ -1055,6 +1056,14 @@
                 return;
             }
 
+            const isAgent = text.startsWith('/agent');
+            if (isAgent) {
+                await sendAgent(text.slice(6).trim());
+                setDisabled(false);
+                inputEl.focus();
+                return;
+            }
+
             const contentEl = appendAssistant('', false);
             const cursor = document.createElement('span');
             cursor.className = 'cursor';
@@ -1141,6 +1150,123 @@
             } catch (e) {
                 appendSystem('council error: ' + e.message);
             }
+        }
+
+        // ── Agent mode: multi-step tool-use loop with confirmation resume ──
+
+        async function sendAgent(text) {
+            if (!text) { appendSystem('usage: /agent <task>'); return; }
+            appendSystem('agent working...');
+            const ctx = { bubble: null };
+            try {
+                await runAgentStream(fetch('/chat_agent', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ content: text })
+                }), ctx);
+            } catch (e) {
+                appendSystem('agent error: ' + e.message);
+            }
+        }
+
+        // Process a stream; if it pauses for approval, collect decisions and resume.
+        async function runAgentStream(fetchPromise, ctx) {
+            const res = await fetchPromise;
+            const pause = await processAgentStream(res, ctx);
+            if (pause) {
+                const approvals = await collectApprovals(pause.pending);
+                await runAgentStream(fetch('/agent_resume', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ run_id: pause.run_id, approvals })
+                }), ctx);
+            }
+        }
+
+        async function processAgentStream(res, ctx) {
+            const reader = res.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = '';
+            let pause = null;
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                buffer += decoder.decode(value, { stream: true });
+                const lines = buffer.split('\n');
+                buffer = lines.pop();
+                for (const line of lines) {
+                    if (!line.startsWith('data: ')) continue;
+                    const data = line.slice(6);
+                    if (data === '[DONE]') continue;
+                    let ev;
+                    try { ev = JSON.parse(data); } catch { continue; }
+                    handleAgentEvent(ev, ctx);
+                    if (ev.type === 'awaiting_confirmation') {
+                        pause = { run_id: ev.run_id, pending: ev.pending };
+                    }
+                }
+            }
+            return pause;
+        }
+
+        function shortParams(params) {
+            const s = JSON.stringify(params || {});
+            return s.length > 90 ? s.slice(0, 90) + '…' : s;
+        }
+
+        function handleAgentEvent(ev, ctx) {
+            switch (ev.type) {
+                case 'text':
+                    if (ev.text) ctx.bubble = appendAssistant(ev.text, false);
+                    break;
+                case 'tool_call':
+                    appendSystem(`→ ${ev.tool} ${shortParams(ev.params)}`);
+                    ctx.bubble = null;
+                    break;
+                case 'tool_result':
+                    appendSystem(`${ev.success ? '✓' : '✗'} ${ev.tool}` +
+                        (ev.success ? '' : ' — ' + ((ev.result && ev.result.error) || 'failed')));
+                    break;
+                case 'done':
+                    if (ev.text) {
+                        if (ctx.bubble) ctx.bubble.textContent = ev.text;
+                        else ctx.bubble = appendAssistant(ev.text, false);
+                    }
+                    break;
+                case 'max_iterations':
+                    appendSystem('agent stopped — reached step limit');
+                    break;
+                case 'awaiting_confirmation':
+                    appendSystem(`${ev.pending.length} action(s) need your approval`);
+                    break;
+                case 'error':
+                    appendSystem('agent error: ' + (ev.error || 'unknown'));
+                    break;
+            }
+        }
+
+        // Show each pending tool in the confirm panel, await approve/reject.
+        async function collectApprovals(pending) {
+            const approvals = [];
+            for (const call of pending) {
+                document.getElementById('confirm-detail').textContent = JSON.stringify(call, null, 2);
+                document.getElementById('confirm-panel').classList.add('visible');
+                const ok = await new Promise(resolve => { agentApprovalResolve = resolve; });
+                approvals.push(ok);
+                appendSystem(`${ok ? 'approved' : 'denied'}: ${call.tool}`);
+            }
+            document.getElementById('confirm-panel').classList.remove('visible');
+            return approvals;
+        }
+
+        // Panel buttons: route to the agent run if one is waiting, else legacy path.
+        function confirmApprove() {
+            if (agentApprovalResolve) { const r = agentApprovalResolve; agentApprovalResolve = null; r(true); return; }
+            approveAction();
+        }
+        function confirmReject() {
+            if (agentApprovalResolve) { const r = agentApprovalResolve; agentApprovalResolve = null; r(false); return; }
+            rejectAction();
         }
 
         function showNextConfirmation() {

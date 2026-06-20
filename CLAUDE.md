@@ -182,9 +182,15 @@ Some of this contains **personal data** — past commits (`64ce172`, `ac9ab25`) 
 - ✅ Tool guardrails — write-root fencing + shell denylist + surgical `edit_file`; fixed the broken `create_task` tool.
 - ✅ Tolerant tool-call parsing; `POST /chat_agent` SSE endpoint; 23 new offline tests.
 
+**Agent confirmation resume — DONE (2026-06):** `/agent <task>` in the web UI runs
+the loop, renders tool calls/results inline, and drives approve→resume through the
+confirm panel. Backend: `POST /agent_resume` + a server-side `_agent_runs` registry
+(the transcript stays server-side, keyed by `run_id`). `orchestrator.resume_agent`
+continues the loop after approved tools run.
+
 **Rough edges / still outstanding:**
 1. **Two action systems still coexist** — `tools.py`/`agent.py` (canonical) and the older XML `dispatcher.py` (used only by `run_executor`). Consider retiring the XML path.
-2. **Confirmation resume isn't wired end-to-end in the UI yet** — `agent.py` returns a resumable transcript + `resume_agent`, but the web frontend doesn't drive the approve→resume round-trip yet.
+2. **`_agent_runs` is in-memory** — a paused agent run is lost if the backend restarts before approval (acceptable; runs are short-lived).
 3. **Hard-coded `C:\kamil` paths** throughout — fine for the single machine, but fragile.
 4. **Dead/unused config** — `HEAVY_SERVER_URL` (8086), the older `venv`, several unrouted GGUFs.
 5. **Stale comments** in `orchestrator.py` from removed features.
