@@ -8,7 +8,6 @@ from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel
 from core.orchestrator import Orchestrator
 from context.indexer import Indexer
-from actions.dispatcher import execute_action
 from contextlib import asynccontextmanager
 import json
 import base64
@@ -133,9 +132,6 @@ class Message(BaseModel):
 class ProjectSelect(BaseModel):
     project_name: str
 
-class ActionConfirm(BaseModel):
-    action: dict
-
 class IdentityUpdate(BaseModel):
     key: str
     value: object
@@ -202,19 +198,6 @@ async def council(message: Message):
         return result
     except RuntimeError as e:
         return {"error": str(e)}
-
-@app.post("/execute_action")
-async def confirm_action(data: ActionConfirm):
-    result = execute_action(data.action)
-    return result
-
-@app.post("/chat_actions")
-async def chat_actions(message: Message):
-    return StreamingResponse(
-        generate_action_sse(message.content),
-        media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
-    )
 
 @app.get("/debug")
 async def debug():
@@ -711,21 +694,6 @@ def _forward_agent_events(event_iter, user_message: str = ""):
 
 def generate_agent_sse(user_message: str):
     return _forward_agent_events(kamil.chat_agent(user_message), user_message)
-
-def generate_action_sse(user_message: str):
-    try:
-        result = kamil.chat_with_actions(user_message)
-        data = json.dumps({"chunk": result["response"]})
-        yield f"data: {data}\n\n"
-        if result.get("pending_confirmation"):
-            conf_data = json.dumps({"pending_confirmation": result["pending_confirmation"]})
-            yield f"data: {conf_data}\n\n"
-        yield "data: [DONE]\n\n"
-    except RuntimeError as e:
-        error = json.dumps({"error": str(e)})
-        yield f"data: {error}\n\n"
-
-
 
 @app.post("/execute_tool")
 async def execute_tool_endpoint(data: ToolExecute):

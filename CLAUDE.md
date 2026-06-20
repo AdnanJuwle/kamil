@@ -66,7 +66,7 @@ Models are `*.gguf` files in `C:\kamil\models\` (gitignored, large). Each role i
 | **Primary** | 8080 | `deepseek-r1-distill-14b-q4` | Electron / start.bat | Main reasoning + the Council's "Analyst" |
 | **Council advocate** | 8081 | `dolphin-mistral-7b-q4` | `core/council_loader.py` on demand | Devil's advocate |
 | **Council synthesizer** | 8082 | `llama-3.1-8b-instruct-q4` | `core/council_loader.py` on demand | Final synthesis |
-| **Executor** | 8083 | `qwen2.5-3b-executor-q8` | Electron (+35s) | Fast action/tool generation |
+| ~~Executor~~ | ~~8083~~ | — | — | **Retired 2026-06** (fed the old XML executor path; no longer spawned) |
 | **Voice** | 8084 | `gemma4-e4b-q4` | Electron (+30s) | Quick spoken replies + handoff decision |
 | **Heavy** | 8086 | — | (configured, currently unused) | `HEAVY_SERVER_URL` reserved |
 
@@ -98,12 +98,10 @@ Electron shell (C:\kamil-app)
 ### `core/` — orchestration
 - `orchestrator.py` — the brain. Owns history, builds the per-turn system prompt (`_build_messages`), and exposes the chat modes:
   - `chat` / `chat_stream` — normal conversation (streamed via SSE).
-  - `chat_with_actions` — model emits tool-call JSON; auto-runs safe tools, queues risky ones for confirmation.
-  - `chat_agent` — **agentic tool-use loop** (multi-step: call tool → see result → continue). Streams events; mutating tools pause for confirmation. See `actions/agent.py`.
+  - `chat_agent` — **agentic tool-use loop** (multi-step: call tool → see result → continue). Streams events; mutating tools pause for confirmation. See `actions/agent.py`. This is the one tool-use path.
   - `chat_agentic` — code-aware path: indexes-on-demand and injects symbol context (note: single-shot, not the agent loop).
   - `council_chat` — three-model deliberation.
   - `chat_voice` / the `/voice_chat` endpoint — two-phase: small voice model answers directly OR says "let me check that for you" and hands off to the primary model.
-  - `run_executor` — routes to the small executor model for direct file/shell actions.
   - `_build_messages` is where everything converges: identity, threads, long-term memories, the daily **schedule**, religious context, code/domain context, eMCP context all get layered into the system prompt. Read this method first when debugging "why did Kamil say X."
 - `config.py` — URLs, defaults, loads `prompts/system.md` as `KAMIL_SYSTEM_PROMPT`.
 - `council.py` / `council_loader.py` — Analyst (8080) → Devil's Advocate (8081) → Synthesizer (8082). The loader spawns the two extra servers on demand.
@@ -128,10 +126,10 @@ This is what separates Kamil from a stateless chatbot. Treat it carefully.
 - `watcher.py` — filesystem watcher → auto re-index on change.
 
 ### `actions/` — doing things on the machine
+**One tool path.** (The older XML `dispatcher.py` system + its `filesystem.py`/`shell.py` backends and the `run_executor` executor-model path were retired in 2026-06.)
 - `tools.py` — **the canonical typed tool registry** (read_file, write_file, edit_file, list_directory, shell, search_files, create_task, system_info). Each tool has a permission (`auto` runs immediately, `confirm` needs approval). Guardrails: writes/edits are fenced to `KAMIL_WRITE_ROOTS` (default workspace + `repos/`); shell has a destructive-command denylist; `edit_file` is a surgical unique-snippet replace. `parse_tool_calls` is tolerant (```tool / ```json / bare JSON).
 - `agent.py` — **the agentic tool-use loop** (`iter_agent`). After each model turn it runs auto tools and feeds results back, so the model can read → edit → run-test across multiple steps. Pauses with `awaiting_confirmation` (resumable) the moment a mutating tool is requested. Pure/injectable — fully unit-tested offline with a fake model.
-- `dispatcher.py` — the **older** XML-tag action system (`<action type="write_file" .../>`), still used by the orchestrator's `run_executor`. Prefer `tools.py` + `agent.py` for new work; this remains for the small executor-model path.
-- Backends for the XML path: `filesystem.py`, `shell.py`, `tasks.py` (SQLite `data/tasks.db`).
+- `tasks.py` — SQLite task store (`data/tasks.db`), backing the `create_task` tool.
 - `emcp_client.py` — bridge to the eMCP server (`C:\kamil-app`, port 3001): turns raw MCP tool responses into typed, cross-linked context nodes injected into the prompt.
 
 The orchestrator exposes the loop as `chat_agent()` (SSE endpoint `POST /chat_agent`), which streams structured events: `text`, `tool_call`, `tool_result`, `awaiting_confirmation`, `done`.
@@ -188,11 +186,15 @@ confirm panel. Backend: `POST /agent_resume` + a server-side `_agent_runs` regis
 (the transcript stays server-side, keyed by `run_id`). `orchestrator.resume_agent`
 continues the loop after approved tools run.
 
+**XML action system — RETIRED (2026-06):** one tool path now (`tools.py`/`agent.py`).
+Removed `actions/dispatcher.py`, `filesystem.py`, `shell.py`, `run_executor`,
+`_executor_prompt`, `chat_with_actions`, the `/execute_action` + `/chat_actions`
+endpoints, the dead UI confirm path, and the executor model (Electron no longer
+spawns port 8083). `EXECUTOR_SERVER_URL` dropped from config.
+
 **Rough edges / still outstanding:**
-1. **Two action systems still coexist** — `tools.py`/`agent.py` (canonical) and the older XML `dispatcher.py` (used only by `run_executor`). Consider retiring the XML path.
-2. **`_agent_runs` is in-memory** — a paused agent run is lost if the backend restarts before approval (acceptable; runs are short-lived).
-3. **Hard-coded `C:\kamil` paths** throughout — fine for the single machine, but fragile.
-4. **Dead/unused config** — `HEAVY_SERVER_URL` (8086), the older `venv`, several unrouted GGUFs.
-5. **Stale comments** in `orchestrator.py` from removed features.
+1. **`_agent_runs` is in-memory** — a paused agent run is lost if the backend restarts before approval (acceptable; runs are short-lived).
+2. **Hard-coded `C:\kamil` paths** throughout — fine for the single machine, but fragile.
+3. **Dead/unused config** — `HEAVY_SERVER_URL` (8086), the older `venv`, several unrouted GGUFs.
 
 When in doubt about hardware/model specifics or the intended behavior, the git history (`git log`) is descriptive and the `*.md` design docs at the repo root (`PROJECT_SUMMARY.md`, `CONTEXT_MANAGER_INTEGRATION.md`, `BUILD_REPORT.md`, etc.) capture the design intent — though some predate the current code and may have drifted.

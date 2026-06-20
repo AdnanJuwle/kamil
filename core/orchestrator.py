@@ -2,9 +2,8 @@
 from models.client import LlamaClient
 from core.config import (
     KAMIL_SYSTEM_PROMPT, DEFAULT_TEMPERATURE, DEFAULT_MAX_TOKENS,
-    LLAMA_SERVER_URL, EXECUTOR_SERVER_URL, VOICE_SERVER_URL
+    LLAMA_SERVER_URL, VOICE_SERVER_URL
 )
-from actions.dispatcher import parse_actions, requires_confirmation, execute_action
 from memory.store import save_history, load_history, clear_history, save_setting, load_setting
 from memory.identity import load_identity, is_new_user, update_identity
 from memory.threads import get_threads_summary
@@ -43,7 +42,6 @@ class Orchestrator:
     def __init__(self):
         self.client = LlamaClient(base_url=LLAMA_SERVER_URL)
         self.voice_client = LlamaClient(base_url=VOICE_SERVER_URL)
-        self.executor_client = LlamaClient(base_url=EXECUTOR_SERVER_URL)
         self.history = load_history()
         self.system_prompt = KAMIL_SYSTEM_PROMPT
         self.indexer = None
@@ -76,57 +74,6 @@ class Orchestrator:
             compress_messages(to_compress, current_project)
             self.history = self.history[8:]
             save_history(self.history)
-
-    def _executor_prompt(self, user_message: str) -> str:
-        return f"""You are an executor. Perform the requested action directly using action tags.
-    Available actions:
-    <action type="write_file" path="C:\\full\\path\\file.py">content</action>
-    <action type="read_file" path="C:\\full\\path\\file.py" />
-    <action type="shell" command="command here" />
-    <action type="list_directory" path="C:\\full\\path" />
-    <action type="create_task" title="title" project="project">description</action>
-
-    Rules:
-    - Use real paths only, never placeholders
-    - Default write location: C:\\kamil\\workspace\\
-    - Active project: {self.indexer.current_project if self.indexer else 'none'}
-    - Active project path: C:\\Users\\adnan\\Documents\\repos\\{self.indexer.current_project if self.indexer else ''}
-
-    Task: {user_message}"""
-
-    def run_executor(self, user_message: str) -> dict:
-        prompt = self._executor_prompt(user_message)
-        messages = [{"role": "user", "content": prompt}]
-        try:
-            response = self.executor_client.chat(messages, temperature=0.1, max_tokens=500)
-        except RuntimeError:
-            response = self.client.chat(
-                [{"role": "system", "content": self.system_prompt},
-                 {"role": "user", "content": user_message}],
-                temperature=0.1, max_tokens=500
-            )
-
-        clean_text, actions = parse_actions(response)
-        auto_executed = []
-        pending_confirmation = []
-        for action in actions:
-            if requires_confirmation(action):
-                pending_confirmation.append(action)
-            else:
-                result = execute_action(action)
-                auto_executed.append({"action": action, "result": result})
-                if result.get("success") and action["type"] == "read_file":
-                    clean_text += f"\n\n[Read {action['path']} — {result['lines']} lines]"
-
-        self.history.append({"role": "user", "content": user_message})
-        self.history.append({"role": "assistant", "content": clean_text or "Done."})
-        save_history(self.history)
-
-        return {
-            "response": clean_text or "Done.",
-            "auto_executed": auto_executed,
-            "pending_confirmation": pending_confirmation
-        }
 
     def _classify_intent(self, message: str) -> str:
         msg = message.lower()
@@ -183,9 +130,6 @@ class Orchestrator:
             record_correction()
 
         save_history(self.history)
-
-    # ... (rest of the class unchanged: _get_schedule_context, _build_messages, chat, chat_with_actions, chat_agentic, council_chat, set_project, enable_context, reset, chat_voice)
-    # Include all methods from the previous full version, just without the banter elements.
 
     def _get_schedule_context(self) -> str:
         from datetime import datetime
@@ -325,7 +269,7 @@ class Orchestrator:
         from context.domain_indexer import is_domain_query, detect_query_domain, query_domain
         if is_domain_query(user_message):
             detected_domain = detect_query_domain(user_message)
-            prefer_ops = intent in ("code", "executor")
+            prefer_ops = intent == "code"
             domain_results = query_domain(
                 user_message,
                 n_results=3,
@@ -428,42 +372,6 @@ class Orchestrator:
         save_history(self.history)
         return response
 
-    def chat_with_actions(self, user_message: str) -> dict:
-        from actions.tools import parse_tool_calls, execute_tool, requires_confirmation, get_tool_schemas
-    
-        self._maybe_compress()
-        messages = self._build_messages(user_message)
-        full_response = self.client.chat(messages)
-    
-        tool_calls = parse_tool_calls(full_response)
-        import re
-        clean_text = re.sub(r'```tool\s*\n.*?\n```', '', full_response, flags=re.DOTALL).strip()
-    
-        auto_executed = []
-        pending_confirmation = []
-    
-        for call in tool_calls:
-            tool_name = call["tool"]
-            params = call.get("params", {})
-        
-            if requires_confirmation(tool_name):
-                pending_confirmation.append(call)
-            else:
-                result = execute_tool(tool_name, params)
-                auto_executed.append({"call": call, "result": result.to_dict()})
-                if result.success and tool_name == "read_file":
-                    clean_text += f"\n\n[Read {params.get('path', '')} — {result.output.get('lines', 0)} lines]"
-    
-        self.history.append({"role": "user", "content": user_message})
-        self.history.append({"role": "assistant", "content": clean_text})
-        save_history(self.history)
-    
-        return {
-            "response": clean_text,
-            "auto_executed": auto_executed,
-            "pending_confirmation": pending_confirmation
-        }
-
     def chat_agent(self, user_message: str, max_iters: int = 6) -> Generator[dict, None, None]:
         """
         Agentic tool-use loop: the model can call tools, see their results, and
@@ -534,12 +442,6 @@ class Orchestrator:
         intent = self._classify_intent(user_message)
 
         import re
-        from actions.filesystem import read_file as fs_read_file
-        if intent == "executor":
-            result = self.run_executor(user_message)
-            yield result["response"]
-            return
-
         if self.indexer and not self.indexer.current_project:
             available = self.indexer.list_projects()
             msg_lower = user_message.lower()

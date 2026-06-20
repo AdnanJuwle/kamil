@@ -759,8 +759,6 @@
         const projectStatus = document.getElementById('project-status');
         const loadBtn = document.getElementById('load-btn');
 
-        let pendingActions = [];
-        let currentActionIndex = 0;
         let agentApprovalResolve = null;   // set while an agent run awaits approval
 
         // Voice variables
@@ -1100,11 +1098,6 @@
                                 contentEl.parentElement.appendChild(cursor);
                                 scrollBottom();
                             }
-                            if (parsed.pending_confirmation) {
-                                pendingActions = parsed.pending_confirmation;
-                                currentActionIndex = 0;
-                                showNextConfirmation();
-                            }
                             if (parsed.error) {
                                 contentEl.textContent = 'Error: ' + parsed.error;
                             }
@@ -1259,45 +1252,12 @@
             return approvals;
         }
 
-        // Panel buttons: route to the agent run if one is waiting, else legacy path.
+        // Confirm-panel buttons resolve the pending agent approval (see collectApprovals).
         function confirmApprove() {
-            if (agentApprovalResolve) { const r = agentApprovalResolve; agentApprovalResolve = null; r(true); return; }
-            approveAction();
+            if (agentApprovalResolve) { const r = agentApprovalResolve; agentApprovalResolve = null; r(true); }
         }
         function confirmReject() {
-            if (agentApprovalResolve) { const r = agentApprovalResolve; agentApprovalResolve = null; r(false); return; }
-            rejectAction();
-        }
-
-        function showNextConfirmation() {
-            if (currentActionIndex >= pendingActions.length) {
-                document.getElementById('confirm-panel').classList.remove('visible');
-                pendingActions = [];
-                currentActionIndex = 0;
-                return;
-            }
-            const action = pendingActions[currentActionIndex];
-            document.getElementById('confirm-detail').textContent = JSON.stringify(action, null, 2);
-            document.getElementById('confirm-panel').classList.add('visible');
-        }
-
-        async function approveAction() {
-            const action = pendingActions[currentActionIndex]
-            const res = await fetch('/execute_tool', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ tool: action.tool, params: action.params })
-            })
-            const result = await res.json()
-            appendSystem(`tool: ${action.tool} — ${result.success ? 'done' : result.error}`)
-            currentActionIndex++
-            showNextConfirmation()
-        }
-
-        function rejectAction() {
-            appendSystem(`action rejected: ${pendingActions[currentActionIndex].type}`);
-            currentActionIndex++;
-            showNextConfirmation();
+            if (agentApprovalResolve) { const r = agentApprovalResolve; agentApprovalResolve = null; r(false); }
         }
 
         async function loadProjects() {
