@@ -560,8 +560,18 @@ class SymbolIndex:
 
         # Detect explicit file reference: "in ekf.py", "ekf.py"
         file_match = re.search(r'(\w+)\.py', query, re.IGNORECASE)
-        # Detect explicit class reference: "EKF class", "class EKF"
-        class_match = re.search(r'\b([A-Z][a-zA-Z]+)\s+class|class\s+([A-Z][a-zA-Z]+)', query)
+        # Candidate class references: explicit ("EKF class" / "class EKF") PLUS any
+        # CapWord token — so natural questions like "how does the EKF fuse GPS"
+        # surface the EKF class without needing the literal word "class". Each
+        # candidate is checked against the index, so non-class CapWords (GPS, IMU)
+        # self-filter out.
+        class_candidates = []
+        _explicit = re.search(r'\b([A-Z][a-zA-Z]+)\s+class|class\s+([A-Z][a-zA-Z]+)', query)
+        if _explicit:
+            class_candidates.append(_explicit.group(1) or _explicit.group(2))
+        for _tok in re.findall(r'\b([A-Z][a-zA-Z0-9_]{2,})\b', query):
+            if _tok not in class_candidates:
+                class_candidates.append(_tok)
 
         exact_sections = []
 
@@ -580,19 +590,23 @@ class SymbolIndex:
                     lines.append("```")
                 exact_sections.append("\n".join(lines))
 
-        if class_match:
-            class_name = class_match.group(1) or class_match.group(2)
+        _dumped_classes = set()
+        for class_name in class_candidates:
+            if class_name in _dumped_classes or len(_dumped_classes) >= 3:
+                continue
             methods = self.get_class_methods(class_name)
-            if methods:
-                lines = [f"\n### {class_name} — ALL METHODS"]
-                for m in methods:
-                    lines.append(f"\n#### {m['kind'].upper()}: {class_name}.{m['name']} (line {m['lineno']})")
-                    if m['docstring']:
-                        lines.append(f'"""{m["docstring"]}"""')
-                    lines.append("```python")
-                    lines.append(m['source'][:1500])
-                    lines.append("```")
-                exact_sections.append("\n".join(lines))
+            if not methods:   # not a real indexed class (e.g. GPS, IMU) -> skip
+                continue
+            _dumped_classes.add(class_name)
+            lines = [f"\n### {class_name} — ALL METHODS"]
+            for m in methods:
+                lines.append(f"\n#### {m['kind'].upper()}: {class_name}.{m['name']} (line {m['lineno']})")
+                if m['docstring']:
+                    lines.append(f'"""{m["docstring"]}"""')
+                lines.append("```python")
+                lines.append(m['source'][:1500])
+                lines.append("```")
+            exact_sections.append("\n".join(lines))
 
         if exact_sections:
             parts.append("\n## Exact Matches\n" + "\n".join(exact_sections))
