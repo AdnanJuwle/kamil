@@ -423,7 +423,10 @@ def learn_document(filepath: str, domain: str = "general", source_name: str = No
     docs, ids, metas = [], [], []
     cidx = 0
     for page_text, page_num in pages:
-        for chunk in chunk_text(page_text):
+        # chunk_text drops <100-char fragments (good for books); for a deliberately
+        # uploaded short note, keep the whole text rather than losing it.
+        chunks = chunk_text(page_text) or ([page_text.strip()] if page_text.strip() else [])
+        for chunk in chunks:
             docs.append(chunk)
             ids.append(f"learn_{domain}_{stem}_{cidx}")
             metas.append({

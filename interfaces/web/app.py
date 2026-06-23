@@ -3,7 +3,7 @@ import os
 os.environ["TRANSFORMERS_OFFLINE"] = "1"
 os.environ["HF_DATASETS_OFFLINE"] = "1"
 sys.path.insert(0, r'C:\kamil')
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, UploadFile, File, Form
 from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel
 from core.orchestrator import Orchestrator
@@ -224,6 +224,24 @@ async def presence_poll():
             kamil.history.append({"role": "assistant", "content": m["text"]})
         save_history(kamil.history)
     return {"messages": msgs}
+
+@app.post("/learn")
+async def learn(file: UploadFile = File(...), domain: str = Form("general")):
+    """Upload a doc -> Kamil ingests it as a skill (immediately queryable)."""
+    import shutil
+    from context.domain_indexer import learn_document, DOMAIN_BOOKS_DIR
+    safe_domain = "".join(c for c in domain if c.isalnum() or c in "_-").lower() or "general"
+    dest_dir = os.path.join(DOMAIN_BOOKS_DIR, safe_domain)
+    os.makedirs(dest_dir, exist_ok=True)
+    dest = os.path.join(dest_dir, os.path.basename(file.filename))
+    try:
+        with open(dest, "wb") as f:
+            shutil.copyfileobj(file.file, f)
+        result = learn_document(dest, domain=safe_domain)
+        return result
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        return {"success": False, "error": str(e), "chunks": 0}
 
 @app.get("/projects")
 async def list_projects():

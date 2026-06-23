@@ -326,6 +326,18 @@ def _forget(params: dict) -> ToolResult:
     return ToolResult(success=True, output=r, tool="forget", params=params)
 
 
+def _learn(params: dict) -> ToolResult:
+    """Ingest a document into Kamil's skill library so it can be retrieved later."""
+    path = params.get("path", "")
+    if not os.path.isfile(path):
+        return ToolResult(success=False, error=f"file not found: {path}", tool="learn", params=params)
+    from context.domain_indexer import learn_document
+    r = learn_document(path, domain=params.get("domain", "general"))
+    if not r.get("success"):
+        return ToolResult(success=False, error=r.get("error", "ingest failed"), tool="learn", params=params)
+    return ToolResult(success=True, output=r, tool="learn", params=params)
+
+
 def _get_system_info(params: dict) -> ToolResult:
     import platform
     try:
@@ -422,6 +434,16 @@ TOOLS: dict[str, Tool] = {
         params=[],
         permission=Permission.AUTO,
         execute=_get_system_info
+    ),
+    "learn": Tool(
+        name="learn",
+        description="Ingest a document (pdf/epub/txt/md) into your skill library so you can retrieve its knowledge later",
+        params=[
+            ToolParam("path", "string", required=True, description="Absolute path to the document"),
+            ToolParam("domain", "string", required=False, description="Skill category, e.g. 'robotics' (default: general)"),
+        ],
+        permission=Permission.AUTO,
+        execute=_learn
     ),
     "remind": Tool(
         name="remind",
