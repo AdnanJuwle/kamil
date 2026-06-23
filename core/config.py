@@ -25,3 +25,20 @@ def load_system_prompt() -> str:
         return "You are Kamil, a local AI assistant."
 
 KAMIL_SYSTEM_PROMPT = load_system_prompt()
+
+# Hot-reloading accessor: re-reads system.md only when the file changes (cheap
+# mtime check), so editing the prompt takes effect on the next message — no
+# backend restart needed for prompt tweaks.
+_PROMPT_CACHE = {"mtime": 0.0, "text": KAMIL_SYSTEM_PROMPT}
+
+def get_system_prompt() -> str:
+    prompt_path = os.path.join(PROMPTS_DIR, 'system.md')
+    try:
+        mtime = os.path.getmtime(prompt_path)
+        if mtime != _PROMPT_CACHE["mtime"]:
+            with open(prompt_path, 'r', encoding='utf-8') as f:
+                _PROMPT_CACHE["text"] = f.read().strip()
+            _PROMPT_CACHE["mtime"] = mtime
+        return _PROMPT_CACHE["text"]
+    except FileNotFoundError:
+        return _PROMPT_CACHE["text"] or "You are Kamil, a local AI assistant."

@@ -43,7 +43,7 @@ class Orchestrator:
         self.client = LlamaClient(base_url=LLAMA_SERVER_URL)
         self.voice_client = LlamaClient(base_url=VOICE_SERVER_URL)
         self.history = load_history()
-        self.system_prompt = KAMIL_SYSTEM_PROMPT
+        self._project_block = ""   # appended to the hot-reloaded base prompt
         self.indexer = None
         self.context_enabled = False
         self.council = None
@@ -59,6 +59,13 @@ class Orchestrator:
         # Load existing history into RAM on startup (last 10 messages)
         for msg in self.history[-10:]:
             self.ctx.add_message(msg)
+
+    @property
+    def system_prompt(self) -> str:
+        # Hot-reloaded base prompt (edits to system.md apply next message, no
+        # restart) plus any active-project addendum.
+        from core.config import get_system_prompt
+        return get_system_prompt() + self._project_block
 
     def _init_council(self):
         try:
@@ -576,7 +583,7 @@ class Orchestrator:
         self.enable_context(indexer)
         self.long_term._external_embedder = indexer.embedder
         project_path = f"C:\\Users\\adnan\\Documents\\repos\\{project_name}"
-        self.system_prompt = KAMIL_SYSTEM_PROMPT + f"""
+        self._project_block = f"""
 
 Active project: {project_name}
 Project directory: {project_path}
