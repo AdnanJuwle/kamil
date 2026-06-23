@@ -183,6 +183,18 @@ def test_resume_with_denial_continues():
 
 # ── strip_tool_blocks ─────────────────────────────────────────────
 
+def test_read_file_result_shows_full_clean_content():
+    # the model must SEE a file to edit it: read_file content shown in full
+    # (beyond the generic 2000 cap), not as a truncated str(dict).
+    content = "def foo():\n" + ("    x = 1  # filler\n" * 200) + "    return SECRET_TOKEN\n"
+    results = [({"tool": "read_file", "params": {}},
+                {"success": True, "output": {"content": content, "lines": 202, "path": "C:\\a.py"}})]
+    out = agent._format_results(results, max_chars=2000)
+    assert "SECRET_TOKEN" in out          # not truncated at 2000
+    assert "'content':" not in out        # clean, not a python dict repr
+    assert "C:\\a.py" in out              # path shown
+
+
 def test_strip_tool_blocks_removes_fences_and_bare_json():
     text = 'Here goes:\n```tool\n{"tool":"read_file","params":{"path":"a"}}\n```\nand done'
     cleaned = agent.strip_tool_blocks(text)

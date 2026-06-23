@@ -67,18 +67,31 @@ def _as_dict(result) -> dict:
 
 
 def _format_results(results: list[tuple[dict, dict]], max_chars: int) -> str:
-    """Render executed tool results into a compact message the model reads next."""
+    """Render executed tool results into a message the model reads next. read_file
+    is rendered as clean, fuller file content (the model must SEE a file to edit it)
+    instead of a truncated dict repr."""
     lines = ["[tool results]"]
     for call, res in results:
         tool = call.get("tool", "?")
-        if res.get("success"):
-            out = res.get("output", res)
+        if not res.get("success"):
+            lines.append(f"{tool} -> ERROR: {res.get('error', 'unknown error')}")
+            continue
+        out = res.get("output", res)
+        # read_file: show the real content (generously), not str(dict)
+        if tool == "read_file" and isinstance(out, dict) and "content" in out:
+            content = out["content"]
+            cap = max(max_chars, 8000)   # files need to be seen in full to be edited
+            if len(content) > cap:
+                content = (content[:cap] +
+                           f"\n…[truncated at {cap} of {len(content)} chars — "
+                           "read a specific region if you need more]")
+            lines.append(f"read_file {out.get('path','')} ({out.get('lines','?')} lines):\n"
+                         f"<<<\n{content}\n>>>")
+        else:
             text = str(out)
             if len(text) > max_chars:
-                text = text[:max_chars] + f"... [truncated, {len(text)} chars total]"
+                text = text[:max_chars] + f"… [truncated, {len(text)} chars total]"
             lines.append(f"{tool} -> OK: {text}")
-        else:
-            lines.append(f"{tool} -> ERROR: {res.get('error', 'unknown error')}")
     lines.append(
         "\nUse these results. Call more tools if the task isn't finished, "
         "or give your final answer with NO tool block when you're done."
