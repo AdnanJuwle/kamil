@@ -21,6 +21,16 @@ import io
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
 sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
 
+def _agent_needs_confirm():
+    """The confirmation predicate for the agent loop. Default (KAMIL_AGENT_AUTO=1):
+    in-fence mutations auto-run, out-of-fence pause. KAMIL_AGENT_AUTO=0: confirm
+    every mutation (the old behaviour)."""
+    from actions.tools import requires_confirmation, requires_confirmation_call
+    if os.getenv("KAMIL_AGENT_AUTO", "1") == "1":
+        return requires_confirmation_call
+    return requires_confirmation
+
+
 VOICE_HANDOFF_PHRASES = [
     "let me check that for you",
     "give me a moment",
@@ -416,9 +426,14 @@ class Orchestrator:
             + "\n\nTo call a tool, output a fenced block exactly like:\n"
             '```tool\n{"tool": "read_file", "params": {"path": "C:\\\\path\\\\file.py"}}\n```\n'
             "After each tool runs you will see its result, then call more tools or give "
-            "your final answer with NO tool block when finished. Tools marked "
-            "[needs approval] will pause for the user. Prefer edit_file over write_file "
-            "for changing existing files.\n"
+            "your final answer with NO tool block when finished. Prefer edit_file over "
+            "write_file for changing existing files.\n"
+            "You can work autonomously: edit_file/write_file/shell run automatically when "
+            "they're inside the workspace or a project repo (and the shell command isn't "
+            "destructive) — only actions outside those bounds pause for the user. So for a "
+            "coding task, flow through it: read the file → edit it → run the test/command "
+            "to verify → fix if it fails → report. Don't stop to ask permission for normal "
+            "in-project edits.\n"
             "Rules: never write out or guess a tool's result before you run it — call "
             "the tool and use the REAL result. Don't repeat a tool call you already "
             "made. Once a tool gives you what you need, ANSWER from it directly — never "
@@ -428,7 +443,8 @@ class Orchestrator:
         model_fn = lambda msgs: self.client.chat(msgs)
         final_text = ""
         terminal = "done"
-        for event in iter_agent(model_fn, messages, max_iters=max_iters):
+        for event in iter_agent(model_fn, messages, max_iters=max_iters,
+                                needs_confirm=_agent_needs_confirm()):
             if event.get("type") in ("text", "done", "max_iterations") and event.get("text"):
                 final_text = event["text"]
             terminal = event.get("type", terminal)
@@ -454,7 +470,8 @@ class Orchestrator:
         model_fn = lambda msgs: self.client.chat(msgs)
         final_text = ""
         terminal = "done"
-        for event in _resume(model_fn, transcript, executed, max_iters=max_iters):
+        for event in _resume(model_fn, transcript, executed, max_iters=max_iters,
+                             needs_confirm=_agent_needs_confirm()):
             if event.get("type") in ("text", "done", "max_iterations") and event.get("text"):
                 final_text = event["text"]
             terminal = event.get("type", terminal)

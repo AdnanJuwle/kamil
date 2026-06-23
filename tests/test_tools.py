@@ -109,6 +109,18 @@ def test_permission_levels():
     assert tools.requires_confirmation("unknown_tool") is True  # unknown -> safe default
 
 
+def test_call_aware_confirmation_in_vs_out_of_fence(tmp_path, monkeypatch):
+    monkeypatch.setenv("KAMIL_WRITE_ROOTS", str(tmp_path))
+    inside = str(tmp_path / "a.py")
+    rc = tools.requires_confirmation_call
+    assert rc("read_file", {}) is False                          # auto tool
+    assert rc("edit_file", {"path": inside}) is False            # in fence -> auto
+    assert rc("write_file", {"path": inside}) is False           # in fence -> auto
+    assert rc("edit_file", {"path": "C:\\Windows\\x.py"}) is True  # outside -> pause
+    assert rc("shell", {"command": "echo hi"}) is False          # allowed -> auto
+    assert rc("shell", {"command": "rm -rf C:\\"}) is True        # denylisted -> pause
+
+
 # ── tolerant parsing ──────────────────────────────────────────────
 
 def test_parse_tool_fence():

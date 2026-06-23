@@ -183,6 +183,25 @@ def test_resume_with_denial_continues():
 
 # ── strip_tool_blocks ─────────────────────────────────────────────
 
+def test_autonomy_in_fence_edit_autoruns_out_of_fence_pauses(tmp_path, monkeypatch):
+    monkeypatch.setenv("KAMIL_WRITE_ROOTS", str(tmp_path))
+    from actions.tools import requires_confirmation_call
+    inside = (str(tmp_path) + "/a.py").replace("\\", "/")
+
+    # in-fence write: auto-runs (no pause) -> reaches done
+    m1 = FakeModel(['```tool\n{"tool":"write_file","params":{"path":"%s","content":"x"}}\n```' % inside,
+                    "Wrote it."])
+    r1 = agent.run_agent(m1, [{"role": "user", "content": "go"}],
+                         executor=fake_executor, needs_confirm=requires_confirmation_call)
+    assert r1["status"] == "done"
+
+    # out-of-fence write: pauses for confirmation
+    m2 = FakeModel(['```tool\n{"tool":"write_file","params":{"path":"C:/Windows/x","content":"x"}}\n```'])
+    r2 = agent.run_agent(m2, [{"role": "user", "content": "go"}],
+                         executor=fake_executor, needs_confirm=requires_confirmation_call)
+    assert r2["status"] == "awaiting_confirmation"
+
+
 def test_read_file_result_shows_full_clean_content():
     # the model must SEE a file to edit it: read_file content shown in full
     # (beyond the generic 2000 cap), not as a truncated str(dict).

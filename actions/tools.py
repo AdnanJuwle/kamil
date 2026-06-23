@@ -541,6 +541,25 @@ def requires_confirmation(tool_name: str) -> bool:
     return TOOLS[tool_name].permission == Permission.CONFIRM
 
 
+def requires_confirmation_call(tool_name: str, params: dict) -> bool:
+    """Call-aware confirmation for autonomous agent mode: a CONFIRM tool may
+    auto-run if THIS specific call already passes the hard guardrails (write inside
+    the allowed roots, shell not on the denylist). Calls that fall outside the
+    fence still pause for the user."""
+    tool = TOOLS.get(tool_name)
+    if tool is None:
+        return True
+    if tool.permission != Permission.CONFIRM:
+        return False
+    params = params or {}
+    if tool_name in ("write_file", "edit_file"):
+        return not _within_write_roots(params.get("path", ""))
+    if tool_name == "shell":
+        ok, _ = _command_allowed(params.get("command", ""))
+        return not ok
+    return True  # any other approval-gated tool still confirms
+
+
 def parse_tool_calls(response: str) -> list[dict]:
     """
     Parse tool calls from a model response. Tolerant of how the model fences them:

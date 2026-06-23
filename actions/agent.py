@@ -130,8 +130,16 @@ def iter_agent(
             yield {"type": "done", "text": text}
             return
 
-        auto = [c for c in calls if not needs_confirm(c["tool"])]
-        pending = [c for c in calls if needs_confirm(c["tool"])]
+        # needs_confirm may be tool-level (tool) or call-aware (tool, params);
+        # adapt so an autonomous-mode predicate can auto-run in-fence mutations.
+        def _confirm(c):
+            try:
+                return needs_confirm(c["tool"], c.get("params", {}))
+            except TypeError:
+                return needs_confirm(c["tool"])
+
+        auto = [c for c in calls if not _confirm(c)]
+        pending = [c for c in calls if _confirm(c)]
 
         # Run auto tools first so their work isn't lost if we then pause.
         results: list[tuple[dict, dict]] = []
