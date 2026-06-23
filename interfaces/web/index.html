@@ -1033,6 +1033,16 @@
             appendAssistant(text, false);
         }
 
+        // Hide tool/memory calls from the display — fenced (```tool / ```json) or bare JSON.
+        function hideTools(t) {
+            let cut = t.length;
+            for (const m of ['```tool', '```json', '{"tool"', '{ "tool"', "{'tool'"]) {
+                const i = t.indexOf(m);
+                if (i !== -1 && i < cut) cut = i;
+            }
+            return t.slice(0, cut).trimEnd();
+        }
+
         function escapeHtml(text) {
             return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
         }
@@ -1069,14 +1079,17 @@
             }
 
             const contentEl = appendAssistant('', false);
+            contentEl.textContent = 'thinking…';
             const cursor = document.createElement('span');
             cursor.className = 'cursor';
             contentEl.parentElement.appendChild(cursor);
 
             let fullText = '';
+            let firstChunk = true;
 
             try {
-                const res = await fetch('/chat_agentic', {
+                // /chat streams token-by-token (perceived speed); /agent for tools.
+                const res = await fetch('/chat', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ content: text })
@@ -1099,8 +1112,10 @@
                         try {
                             const parsed = JSON.parse(data);
                             if (parsed.chunk) {
+                                if (firstChunk) { fullText = ''; firstChunk = false; }
                                 fullText += parsed.chunk;
-                                contentEl.textContent = fullText;
+                                // hide any memory/tool block from the display
+                                contentEl.textContent = hideTools(fullText);
                                 contentEl.parentElement.appendChild(cursor);
                                 scrollBottom();
                             }
@@ -1114,6 +1129,8 @@
                 contentEl.textContent = 'Connection error: ' + e.message;
             } finally {
                 if (cursor && cursor.parentElement) cursor.remove();
+                // reply was only a memory/tool op -> show a tick instead of a blank bubble
+                if (!firstChunk && !contentEl.textContent.trim()) contentEl.textContent = '✓ noted';
                 setDisabled(false);
                 inputEl.focus();
             }

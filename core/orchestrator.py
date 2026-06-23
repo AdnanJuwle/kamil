@@ -114,6 +114,8 @@ class Orchestrator:
         for chunk in self.client.chat_stream(messages, temperature=temperature, max_tokens=max_tokens):
             full_response += chunk
             yield chunk
+        # Kamil can save to its own memory mid-chat via a trailing tool block.
+        full_response = self._apply_memory_ops(full_response)
         self.history.append({"role": "user", "content": user_message})
         self.history.append({"role": "assistant", "content": full_response})
 
@@ -130,6 +132,26 @@ class Orchestrator:
             record_correction()
 
         save_history(self.history)
+
+    def _apply_memory_ops(self, text: str) -> str:
+        """Execute any remember/update_memory tool calls Kamil put in its reply,
+        and strip those blocks from what gets shown/saved. Lets Kamil curate its
+        own memory.md during normal (non-agent) chat."""
+        try:
+            from actions.tools import parse_tool_calls, execute_tool
+            from actions.agent import strip_tool_blocks
+            calls = [c for c in parse_tool_calls(text)
+                     if c.get("tool") in ("remember", "update_memory", "forget")]
+            if not calls:
+                return text
+            for c in calls:
+                try:
+                    execute_tool(c["tool"], c["params"])
+                except Exception:
+                    pass
+            return strip_tool_blocks(text)
+        except Exception:
+            return text
 
     def _get_schedule_context(self) -> str:
         from core.schedule import schedule_context
@@ -213,6 +235,17 @@ class Orchestrator:
             if note:
                 system += f"\n\n{note}"
             presence.record_interaction()
+        except Exception:
+            pass
+
+        # Kamil's own self-authored memory notes (it curates these via tools).
+        try:
+            from core.self_memory import memory_for_prompt, is_over_cap
+            notes = memory_for_prompt()
+            if notes:
+                system += f"\n\n## WHAT I'VE LEARNED (my own memory — I keep and curate this)\n{notes}"
+                if is_over_cap():
+                    system += "\n(These notes are getting long — consolidate them with update_memory.)"
         except Exception:
             pass
 
@@ -347,6 +380,7 @@ class Orchestrator:
         self._maybe_compress()
         messages = self._build_messages(user_message)
         response = self.client.chat(messages, temperature=temperature, max_tokens=max_tokens)
+        response = self._apply_memory_ops(response)
         self.history.append({"role": "user", "content": user_message})
         self.history.append({"role": "assistant", "content": response})
         self.ctx.add_message({"role": "user", "content": user_message})

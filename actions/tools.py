@@ -301,6 +301,31 @@ def _remind(params: dict) -> ToolResult:
                       tool="remind", params=params)
 
 
+def _remember(params: dict) -> ToolResult:
+    """Append a durable fact to Kamil's own memory notes (memory.md)."""
+    from core.self_memory import append_note
+    r = append_note(params.get("note", ""))
+    if not r.get("success"):
+        return ToolResult(success=False, error=r.get("error", "failed"), tool="remember", params=params)
+    return ToolResult(success=True, output=r, tool="remember", params=params)
+
+
+def _update_memory(params: dict) -> ToolResult:
+    """Replace the whole memory-notes body with a curated/consolidated version."""
+    from core.self_memory import set_memory
+    r = set_memory(params.get("content", ""))
+    return ToolResult(success=True, output=r, tool="update_memory", params=params)
+
+
+def _forget(params: dict) -> ToolResult:
+    """Surgically remove only the memory note(s) matching a query."""
+    from core.self_memory import forget
+    r = forget(params.get("query", ""))
+    if not r.get("success"):
+        return ToolResult(success=False, error=r.get("error", "failed"), tool="forget", params=params)
+    return ToolResult(success=True, output=r, tool="forget", params=params)
+
+
 def _get_system_info(params: dict) -> ToolResult:
     import platform
     try:
@@ -400,7 +425,7 @@ TOOLS: dict[str, Tool] = {
     ),
     "remind": Tool(
         name="remind",
-        description="Set a reminder Kamil will bring up when due (give 'at' as ISO time, or 'in_minutes')",
+        description="Set a time-based reminder Kamil surfaces when due (give 'at' as ISO time, or 'in_minutes')",
         params=[
             ToolParam("text", "string", required=True, description="What to remind about"),
             ToolParam("at", "string", required=False, description="ISO 8601 datetime, e.g. 2026-06-21T15:00"),
@@ -408,6 +433,33 @@ TOOLS: dict[str, Tool] = {
         ],
         permission=Permission.AUTO,
         execute=_remind
+    ),
+    "remember": Tool(
+        name="remember",
+        description="Save a durable fact to your own long-term memory notes (memory.md) — facts about Adnan, projects, decisions, environment. Not feelings, not chit-chat.",
+        params=[
+            ToolParam("note", "string", required=True, description="One concise, true, durable fact worth carrying forward"),
+        ],
+        permission=Permission.AUTO,
+        execute=_remember
+    ),
+    "forget": Tool(
+        name="forget",
+        description="Remove a single note from memory by matching a few of its words. Use THIS to forget one thing — never update_memory.",
+        params=[
+            ToolParam("query", "string", required=True, description="A few words that identify the note to drop, e.g. 'chicken popcorn'"),
+        ],
+        permission=Permission.AUTO,
+        execute=_forget
+    ),
+    "update_memory": Tool(
+        name="update_memory",
+        description="DANGER: replaces your ENTIRE memory body. Only to rewrite the whole curated list — you must include every note you want to keep. To remove one item use forget instead.",
+        params=[
+            ToolParam("content", "string", required=True, description="The FULL curated notes body (every bullet you want to keep)"),
+        ],
+        permission=Permission.AUTO,
+        execute=_update_memory
     ),
 }
 

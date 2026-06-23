@@ -6,7 +6,9 @@ VOICE_SERVER_URL    = os.getenv("KAMIL_VOICE_URL",     "http://127.0.0.1:8084")
 HEAVY_SERVER_URL    = os.getenv("KAMIL_HEAVY_URL",     "http://127.0.0.1:8086")
 
 DEFAULT_TEMPERATURE = float(os.getenv("KAMIL_TEMPERATURE", "0.7"))
-DEFAULT_MAX_TOKENS = int(os.getenv("KAMIL_MAX_TOKENS", "8192"))
+# Chat replies should be snappy; 8192 let the old reasoning model ramble for ages.
+# Raise via KAMIL_MAX_TOKENS if you need long code generations.
+DEFAULT_MAX_TOKENS = int(os.getenv("KAMIL_MAX_TOKENS", "1024"))
 
 KAMIL_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MODELS_DIR = os.path.join(KAMIL_ROOT, "models")
