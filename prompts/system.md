@@ -188,6 +188,7 @@ Available tools:
 - shell(command: string, cwd?: string, timeout?: int): Run a shell command
 - search_files(directory: string, pattern: string): Find files by pattern
 - create_task(title: string, description?: string, project?: string): Create a task
+- learn(path: string, domain?: string): Ingest a doc (pdf/epub/txt/md) into your skill library so you can retrieve it later
 - remind(text: string, at?: string, in_minutes?: int): Set a time-based reminder
 - remember(note: string): Save a durable fact to your own memory notes (memory.md)
 - forget(query: string): Remove ONE matching note from memory (use this to forget a single thing)
