@@ -25,10 +25,9 @@ class LongTermMemory:
     def _encode(self, texts: list) -> list:
         if self._external_embedder:
             return self._external_embedder.model.encode(texts).tolist()
-        if self._own_model is None:
-            from sentence_transformers import SentenceTransformer
-            self._own_model = SentenceTransformer("all-MiniLM-L6-v2")
-        return self._own_model.encode(texts).tolist()
+        # share the singleton embedding model instead of loading a duplicate
+        from context.embedder import get_embedding_model
+        return get_embedding_model().encode(texts).tolist()
 
     def store(self, summary: str, topics: list[str] = [], project: str = ""):
         timestamp = datetime.now().isoformat()
@@ -46,7 +45,10 @@ class LongTermMemory:
         )
         return memory_id
 
-    def retrieve(self, query: str, n_results: int = 3) -> list[dict]:
+    def retrieve(self, query: str, n_results: int = 3, min_score: float = 0.4) -> list[dict]:
+        # min_score gates relevance: without it, every prompt got 3 memories no
+        # matter how irrelevant (off-topic queries matched at ~0.1). Calibrated:
+        # relevant memories score >=0.5, irrelevant <=0.3, so 0.4 separates.
         count = self.collection.count()
         if count == 0:
             return []
@@ -59,10 +61,13 @@ class LongTermMemory:
         )
         output = []
         for i in range(len(results["ids"][0])):
+            score = 1 - results["distances"][0][i]
+            if score < min_score:
+                continue
             output.append({
                 "text": results["documents"][0][i],
                 "metadata": results["metadatas"][0][i],
-                "score": 1 - results["distances"][0][i],
+                "score": score,
                 "timestamp": results["metadatas"][0][i].get("timestamp", "")
             })
         return sorted(output, key=lambda x: x["timestamp"], reverse=True)
