@@ -224,6 +224,18 @@ def extract_chm(filepath: str) -> list[tuple[str, int]]:
         return []
 
 
+def extract_text(filepath: str) -> list[tuple[str, int]]:
+    """Plain text / markdown — split into ~2000-char pseudo-pages."""
+    try:
+        with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
+            content = clean_text(f.read())
+    except Exception as e:
+        print(f"[domain_indexer] text extraction failed: {e}")
+        return []
+    return [(content[i:i + 2000], i // 2000 + 1)
+            for i in range(0, len(content), 2000) if content[i:i + 2000].strip()]
+
+
 def extract_file(filepath: str) -> list[tuple[str, int]]:
     """Route to correct extractor based on extension."""
     ext = os.path.splitext(filepath)[1].lower()
@@ -235,6 +247,8 @@ def extract_file(filepath: str) -> list[tuple[str, int]]:
         return extract_mobi(filepath)
     elif ext == ".chm":
         return extract_chm(filepath)
+    elif ext in (".txt", ".md", ".markdown", ".rst"):
+        return extract_text(filepath)
     else:
         print(f"[domain_indexer] Unsupported format: {ext}")
         return []
@@ -380,6 +394,55 @@ def index_domain_books(force_reindex: bool = False):
     print(f"\nTotal indexed this run: {total_indexed} chunks")
     print(f"Collection total: {collection.count()} chunks")
     return collection.count()
+
+
+def learn_document(filepath: str, domain: str = "general", source_name: str = None) -> dict:
+    """
+    Ingest ONE document into the skill library (kamil_domain), without re-walking
+    everything. Immediately queryable. This is the 'drop a doc -> Kamil gains a
+    skill' entry point. Re-learning the same file replaces its chunks (stable ids).
+    """
+    from context.embedder import get_chroma_client, get_embedding_model
+    client = get_chroma_client()
+    try:
+        collection = client.get_collection(COLLECTION_NAME)
+    except Exception:
+        collection = client.create_collection(
+            name=COLLECTION_NAME, metadata={"hnsw:space": "cosine"})
+
+    filename = os.path.basename(filepath)
+    stem = os.path.splitext(filename)[0]
+    source = source_name or stem.replace("_", " ").title()
+    knowledge_type = DOMAIN_KNOWLEDGE_TYPE.get(domain, "theory")
+    bm = get_book_meta(filename)
+
+    pages = extract_file(filepath)
+    if not pages:
+        return {"success": False, "error": f"no text extracted from {filename}", "chunks": 0}
+
+    docs, ids, metas = [], [], []
+    cidx = 0
+    for page_text, page_num in pages:
+        for chunk in chunk_text(page_text):
+            docs.append(chunk)
+            ids.append(f"learn_{domain}_{stem}_{cidx}")
+            metas.append({
+                "domain": domain, "source": source, "filename": filename,
+                "knowledge_type": knowledge_type, "page": page_num, "chunk_idx": cidx,
+                "year": bm["year"], "trust_level": bm["trust"],
+                "is_post_training": bm["post_training"],
+            })
+            cidx += 1
+    if not docs:
+        return {"success": False, "error": "no usable chunks", "chunks": 0}
+
+    model = get_embedding_model()
+    for i in range(0, len(docs), BATCH_SIZE):
+        emb = model.encode(docs[i:i + BATCH_SIZE]).tolist()
+        collection.upsert(ids=ids[i:i + BATCH_SIZE], embeddings=emb,
+                          documents=docs[i:i + BATCH_SIZE], metadatas=metas[i:i + BATCH_SIZE])
+    return {"success": True, "chunks": len(docs), "source": source,
+            "domain": domain, "total": collection.count()}
 
 
 # ── Query ─────────────────────────────────────────────────────────
