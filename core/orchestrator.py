@@ -411,7 +411,11 @@ class Orchestrator:
             "After each tool runs you will see its result, then call more tools or give "
             "your final answer with NO tool block when finished. Tools marked "
             "[needs approval] will pause for the user. Prefer edit_file over write_file "
-            "for changing existing files."
+            "for changing existing files.\n"
+            "Rules: never write out or guess a tool's result before you run it — call "
+            "the tool and use the REAL result. Don't repeat a tool call you already "
+            "made. Once a tool gives you what you need, ANSWER from it directly — never "
+            "say 'we need to look at the file' after you've already read it."
         )
 
         model_fn = lambda msgs: self.client.chat(msgs)
