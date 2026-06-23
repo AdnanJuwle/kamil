@@ -17,12 +17,22 @@ def get_chroma_client():
         _chroma_client = chromadb.PersistentClient(path=CHROMA_PATH)
     return _chroma_client
 
+# Singleton embedding model — loading it is expensive; reuse one instance across
+# all Embedder()s (domain retrieval used to reload it on every query).
+_model = None
+
+def get_embedding_model():
+    global _model
+    if _model is None:
+        print("Loading embedding model...")
+        _model = SentenceTransformer(EMBEDDING_MODEL)
+        print("Embedding model ready.")
+    return _model
+
 class Embedder:
     def __init__(self):
-        print("Loading embedding model...")
-        self.model = SentenceTransformer(EMBEDDING_MODEL)
+        self.model = get_embedding_model()
         self.client = get_chroma_client()
-        print("Embedding model ready.")
 
     def get_or_create_collection(self, project_name: str):
         safe_name = project_name.replace(" ", "_").replace("-", "_").lower()

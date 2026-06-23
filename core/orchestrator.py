@@ -281,25 +281,29 @@ class Orchestrator:
             else:
                 system += "\nNo project loaded. Will auto-load when user mentions a project name."
 
-        from context.domain_indexer import is_domain_query, detect_query_domain, query_domain
-        if is_domain_query(user_message):
-            detected_domain = detect_query_domain(user_message)
-            prefer_ops = intent == "code"
+        # Domain/skill retrieval: always query the library and let SIMILARITY decide
+        # (the old keyword gate blocked ~40% of valid queries; the 0.55 cutoff sat
+        # above the on-topic band). Calibrated: on-topic >=0.50, off-topic <=0.38,
+        # so 0.45 cleanly separates. No hard domain filter — let score rank across all.
+        from context.domain_indexer import query_domain
+        try:
             domain_results = query_domain(
                 user_message,
                 n_results=3,
-                domain_filter=detected_domain,
-                prefer_operational=prefer_ops
+                domain_filter=None,
+                prefer_operational=(intent == "code"),
             )
-            domain_results = [r for r in domain_results if r.get("score", 0) > 0.55]
+            domain_results = [r for r in domain_results if r.get("score", 0) >= 0.45]
             if domain_results:
                 domain_text = "\n\n".join([
                     f"[{r['source']}, {r['domain']}, p{r['page']}]\n{r['text'][:500]}"
                     for r in domain_results
                 ])
-                system += f"\n\nDomain knowledge:\n{domain_text}"
+                system += f"\n\nRelevant knowledge from your library (cite the source):\n{domain_text}"
                 print(f"[orchestrator] Domain context: {len(domain_results)} chunks "
-                      f"from {detected_domain or 'mixed'}")
+                      f"(top score {domain_results[0]['score']:.2f})")
+        except Exception as e:
+            print(f"[orchestrator] Domain retrieval error: {e}")
 
         if self.context_enabled and self.indexer and self.indexer.current_project:
             intent = self._classify_intent(user_message)
