@@ -742,6 +742,8 @@
             <div id="input-toolbar">
                 <button id="mic-btn" class="toolbar-btn" onclick="toggleMic()">mic</button>
                 <button id="enroll-btn" class="toolbar-btn enroll" onclick="enrollVoice()">enroll voice</button>
+                <button id="learn-btn" class="toolbar-btn" onclick="teachDoc()">teach a doc</button>
+                <input type="file" id="learn-file" accept=".pdf,.epub,.txt,.md,.markdown,.rst,.mobi,.chm" style="display:none" onchange="uploadDoc(this.files[0])">
             </div>
             <div id="input-row">
                 <textarea id="input" placeholder="ask kamil anything..." rows="1"></textarea>
@@ -1025,6 +1027,26 @@
             messagesEl.appendChild(row);
             scrollBottom();
             return content;
+        }
+
+        // Teach Kamil a skill: upload a doc -> /learn -> immediately queryable.
+        function teachDoc() { document.getElementById('learn-file').click(); }
+        async function uploadDoc(file) {
+            if (!file) return;
+            const domain = (prompt("What skill is this? (a category, e.g. robotics, finance, legal)", "general") || "general").trim() || "general";
+            appendSystem(`teaching Kamil "${file.name}" (${domain})…`);
+            const fd = new FormData();
+            fd.append('file', file);
+            fd.append('domain', domain);
+            try {
+                const res = await fetch('/learn', { method: 'POST', body: fd });
+                const data = await res.json();
+                if (data.success) appendSystem(`learned "${file.name}" → ${data.chunks} chunks in "${data.domain}". Kamil can use it now.`);
+                else appendSystem(`couldn't learn "${file.name}": ${data.error || 'unknown error'}`);
+            } catch (e) {
+                appendSystem('teach failed: ' + e.message);
+            }
+            document.getElementById('learn-file').value = '';
         }
 
         // Kamil reaching out unprompted (from the presence heartbeat).
