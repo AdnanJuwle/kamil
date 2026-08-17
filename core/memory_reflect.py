@@ -17,21 +17,29 @@ import threading
 
 from core import self_memory
 
-REFLECT_EVERY = int(os.getenv("KAMIL_REFLECT_EVERY", "2"))   # reflect every N assistant turns
-MAX_ADDS_PER_REFLECTION = 3
+REFLECT_EVERY = int(os.getenv("KAMIL_REFLECT_EVERY", "6"))   # reflect every N assistant turns
+MAX_ADDS_PER_REFLECTION = int(os.getenv("KAMIL_REFLECT_MAX_ADDS", "1"))
 
 _lock = threading.Lock()
 _turns_since = 0
 
 _REFLECT_SYS = (
-    "You maintain Kamil's private long-term memory: a lean list of DURABLE facts about Adnan "
-    "(Kamil's creator and user). Read the recent conversation and extract ONLY new, lasting "
-    "facts worth remembering — who Adnan is, his preferences, decisions, projects, relationships, "
-    "environment, or things he asked you to remember. Do NOT include: small talk, questions, "
-    "one-off task details, current-events answers, or anything already in the current memory. "
-    "Output each NEW fact as one short line starting with '- ', written in third person "
-    "('Adnan ...'). If nothing qualifies, output exactly: NONE"
+    "You are the gatekeeper for Kamil's tiny, precious long-term memory about Adnan. It must stay "
+    "SHORT — only a handful of the most important, lasting facts ever belong here.\n"
+    "Read the recent conversation. In the VAST majority of cases the correct answer is NONE — most "
+    "exchanges contain nothing worth permanently remembering.\n"
+    "Save a fact ONLY if it is ALL of these: (1) about Adnan himself (not about Kamil, not the task, "
+    "not the topic being discussed), (2) genuinely NEW — not already in the current memory or implied "
+    "by it, (3) DURABLE and significant — a stable preference, a real relationship, a major decision, "
+    "a long-term project he's committed to, or something he EXPLICITLY told you to remember.\n"
+    "NEVER save: things you (Kamil) said or think, opinions, task steps, code, one-off requests, "
+    "questions, current-events answers, or restatements of the conversation. When in any doubt: NONE.\n"
+    "Output at most ONE new fact as a single line starting with '- ', third person ('Adnan ...'). "
+    "If nothing clears the bar (usually), output exactly: NONE"
 )
+
+# Reject junk even if the model bullets it: must be a substantive third-person fact.
+_BAD_STARTS = ("i ", "i'm", "you ", "you're", "we ", "let ", "here", "sure", "the file", "to ", "it ", "this ", "that ")
 
 _STOP = {"the", "a", "an", "and", "or", "to", "of", "in", "on", "for", "is", "are", "was",
          "his", "her", "he", "she", "it", "with", "that", "this", "adnan", "kamil", "wants",
@@ -61,6 +69,22 @@ def _parse_facts(resp: str) -> list[str]:
         if s.startswith(("- ", "* ", "• ")):
             out.append(s[2:].strip())
     return out
+
+
+def _is_worth_saving(fact: str) -> bool:
+    """A substantive, third-person fact about Adnan — not Kamil's musings, tasks,
+    questions, or filler."""
+    f = fact.strip()
+    low = f.lower()
+    if not (12 <= len(f) <= 200):
+        return False
+    if f.endswith("?"):
+        return False
+    if low.startswith(_BAD_STARTS):
+        return False
+    if "adnan" not in low:            # keep it to real facts about Adnan
+        return False
+    return True
 
 
 def maybe_reflect(history: list[dict], model_fn) -> None:
@@ -93,7 +117,7 @@ def _reflect(history: list[dict], model_fn) -> None:
             added = 0
             for fact in _parse_facts(resp):
                 fact = " ".join(fact.split())
-                if not (8 <= len(fact) <= 240):
+                if not _is_worth_saving(fact):
                     continue
                 if _too_similar(fact, existing_low):
                     continue
