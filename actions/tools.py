@@ -135,9 +135,29 @@ def _read_file(params: dict) -> ToolResult:
         return ToolResult(success=False, error=str(e), tool="read_file", params=params)
 
 
+def _clean_written_content(content) -> str:
+    """Small models sometimes wrap file content in a markdown code fence and/or
+    double-escape newlines, so the file ends up with a literal ```python line and
+    literal '\\n' instead of real line breaks. Strip a wrapping fence and unescape
+    when the content has escaped newlines but no real ones."""
+    if not isinstance(content, str):
+        return content
+    import re
+    c = content
+    # 1) unescape double-escaped whitespace first (literal \n but no real newline)
+    if ('\\n' in c or '\\t' in c) and '\n' not in c:
+        c = (c.replace('\\r\\n', '\n').replace('\\n', '\n')
+               .replace('\\t', '\t').replace('\\"', '"').replace("\\'", "'").replace('\\\\', '\\'))
+    # 2) then strip a wrapping ```lang … ``` fence if the whole content is one block
+    m = re.match(r'^\s*```[^\n`]*\n(.*?)\n?```\s*$', c, re.S)
+    if m:
+        c = m.group(1)
+    return c
+
+
 def _write_file(params: dict) -> ToolResult:
     path = params["path"]
-    content = params["content"]
+    content = _clean_written_content(params["content"])
     if not _within_write_roots(path):
         return ToolResult(
             success=False,
@@ -162,7 +182,7 @@ def _edit_file(params: dict) -> ToolResult:
     """Surgical, unambiguous replace — the reliable way to change code."""
     path = params["path"]
     old = params["old"]
-    new = params["new"]
+    new = _clean_written_content(params["new"])
     if not _within_write_roots(path):
         return ToolResult(
             success=False,
