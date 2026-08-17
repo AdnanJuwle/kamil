@@ -239,6 +239,23 @@
   .gv .gvt { color:var(--machine); font-size:10.5px; text-transform:uppercase; letter-spacing:.08em; align-self:center; }
   .gv .gvt.owner { color:var(--life); }
 
+  #call-overlay { position:fixed; inset:0; z-index:70; display:none; place-items:center;
+    background:radial-gradient(120% 90% at 50% 35%, rgba(232,178,76,.10), rgba(10,8,6,.94) 60%), var(--bg); }
+  #call-overlay.on { display:grid; }
+  .call-inner { display:flex; flex-direction:column; align-items:center; gap:26px; }
+  .call-orb { width:150px; height:150px; border-radius:50%; will-change:transform;
+    background:radial-gradient(circle at 42% 38%, #FBE6B0, #D69836 55%, #B47F2E 100%);
+    box-shadow:0 0 60px 6px var(--life-glow), 0 0 120px 20px rgba(232,178,76,.08); transition:background .4s; }
+  .call-orb.speaking { background:radial-gradient(circle at 42% 38%, #A7DECF, #5AA896 55%, #3E7d6f 100%);
+    box-shadow:0 0 60px 6px rgba(90,168,150,.18); }
+  .call-orb.thinking { background:radial-gradient(circle at 42% 38%, #E9DFCB, #9A9082 60%, #6C6458 100%);
+    box-shadow:0 0 40px 4px rgba(154,144,130,.12); }
+  .call-status { font-family:var(--serif); font-style:italic; font-size:22px; color:var(--ink); min-height:28px; }
+  .call-hint { font-family:var(--mono); font-size:11px; color:var(--faint); letter-spacing:.03em; }
+  .call-hangup { margin-top:10px; background:none; border:1px solid var(--crit); color:var(--crit);
+    border-radius:22px; padding:9px 20px; font-family:var(--mono); font-size:12px; cursor:pointer; transition:.15s; }
+  .call-hangup:hover { background:var(--crit); color:#1B0F0C; }
+
   #confirm-panel { position:fixed; right:24px; bottom:24px; width:360px; background:var(--raised-2);
     border:1px solid var(--life-deep); border-radius:14px; padding:16px; z-index:50; display:none;
     box-shadow:0 20px 60px rgba(0,0,0,.5); }
@@ -287,7 +304,7 @@
   <div class="body">
     <nav class="rail">
       <div class="glyph on" data-view="now" onclick="switchView('now')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="3.2"/><circle cx="12" cy="12" r="8.5" opacity=".5"/></svg><small>Now</small></div>
-      <div class="glyph" onclick="switchView('now'); toggleMic()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 3a3 3 0 0 1 3 3v6a3 3 0 0 1-6 0V6a3 3 0 0 1 3-3zM6 11a6 6 0 0 0 12 0M12 17v4"/></svg><small>Talk (voice)</small></div>
+      <div class="glyph" id="call-facet" onclick="startCall()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M6.5 3.5c1 0 1.6.6 2 1.8l.7 2c.2.7 0 1.3-.5 1.7l-1.2.9a10 10 0 0 0 4.9 4.9l.9-1.2c.4-.5 1-.7 1.7-.5l2 .7c1.2.4 1.8 1 1.8 2v2.3c0 1.2-1 2.1-2.2 1.9C10.9 22.6 1.4 13.1 4.3 5.7 4.6 4.5 5.5 3.5 6.7 3.5z"/></svg><small>Call — hands-free</small></div>
       <div class="glyph" data-view="work" onclick="switchView('work')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M8 6l-4 6 4 6M16 6l4 6-4 6"/></svg><small>Work</small></div>
       <div class="glyph" data-view="memory" onclick="switchView('memory')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 3v18M4 8c4-3 12-3 16 0M4 16c4 3 12 3 16 0"/></svg><small>Memory</small></div>
       <div class="glyph" data-view="skills" onclick="switchView('skills')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M6 4h9l3 3v13H6zM9 9h6M9 13h6"/></svg><small>Skills</small></div>
@@ -341,7 +358,7 @@
       </div>
       <div class="composer">
         <div class="comptools">
-          <button class="comptool" id="mic-btn" onclick="toggleMic()">◎ mic</button>
+          <button class="comptool" id="mic-btn" onclick="toggleMic()">◎ dictate</button>
           <button class="comptool" id="learn-btn" onclick="teachDoc()">＋ teach a doc</button>
           <button class="comptool" id="enroll-btn" onclick="enrollVoice()">enroll voice</button>
           <input type="file" id="learn-file" accept=".pdf,.epub,.txt,.md,.markdown,.rst,.mobi,.chm" style="display:none" onchange="uploadDoc(this.files[0])">
@@ -372,6 +389,15 @@
 
 <div id="glance" onclick="if(event.target===this)closeGlance()">
   <div class="glance-card" id="glance-card"></div>
+</div>
+
+<div id="call-overlay">
+  <div class="call-inner">
+    <div class="call-orb" id="call-orb"></div>
+    <div class="call-status" id="call-status">connecting…</div>
+    <div class="call-hint">speak naturally — say “I'm off” or “bye” to end</div>
+    <button class="call-hangup" onclick="endCall()">✕ end call</button>
+  </div>
 </div>
 
 <div id="confirm-panel">
@@ -645,12 +671,15 @@
         try {
           const res = await fetch('/transcribe', { method:'POST', headers:{'Content-Type':'audio/webm'}, body:blob });
           const data = await res.json(); s.remove();
-          if (data.text) await sendVoiceMessage(data.text); else { appendSystem('could not transcribe audio'); setPresence('at rest','present'); }
+          setPresence('at rest', 'present');
+          // Dictation: your speech becomes a TEXT message with a text reply (no voice).
+          if (data.text && data.text.trim()) { inputEl.value = data.text.trim(); sendMessage(); }
+          else appendSystem('could not transcribe audio');
         } catch (e) { appendSystem('transcription error: ' + e.message); setPresence('at rest','present'); }
       };
       mediaRecorder.start(); isRecording = true;
       startVoiceViz(stream);
-      document.getElementById('mic-btn').classList.add('active'); appendSystem('listening… tap mic to send');
+      document.getElementById('mic-btn').classList.add('active'); appendSystem('dictating… tap to finish');
       setPresence('listening', 'I hear you…');
     } catch (e) { appendSystem('mic error: ' + e.message); }
   }
@@ -768,6 +797,140 @@
       currentAudio = new Audio(url); currentAudio.play().catch(()=>{});
       currentAudio.onended = () => { URL.revokeObjectURL(url); currentAudio=null; resolve(); };
     });
+  }
+
+  // ── Call mode: hands-free continuous voice conversation ──
+  let call = null;
+  const CALL_SPEECH = 0.018, CALL_SILENCE_MS = 1300, CALL_MAX_MS = 22000, CALL_MIN_SPEECH_MS = 350;
+  const CALL_END_PHRASES = ["im off","i am off","bye","goodbye","talk later","thats all","that is all",
+    "end call","hang up","see you","catch you later","im done","i am done","that will be all","im out","peace out"];
+
+  function setCallStatus(s) { const el = document.getElementById('call-status'); if (el) el.textContent = s; }
+  function setCallState(st) { if (call) call.state = st; const o = document.getElementById('call-orb'); if (o) o.className = 'call-orb ' + st; }
+  function callLevel() {
+    call.analyser.getByteTimeDomainData(call.data);
+    let s = 0; for (let i = 0; i < call.data.length; i++) { const v = (call.data[i] - 128) / 128; s += v * v; }
+    return Math.sqrt(s / call.data.length);
+  }
+  function isCallEnd(text) {
+    const t = ' ' + text.toLowerCase().replace(/[^a-z' ]/g, ' ').replace(/\s+/g, ' ').trim() + ' ';
+    return CALL_END_PHRASES.some(p => t.includes(' ' + p + ' '));
+  }
+  function callOrbLoop() {
+    if (!call) return;
+    const lvl = call.state === 'listening' ? callLevel() : 0;
+    window.__voiceLevel = Math.min(1, lvl * 3.4);
+    const o = document.getElementById('call-orb');
+    if (o) { const sc = call.state === 'speaking' ? (1 + 0.07 * Math.sin(performance.now() / 170)) : (1 + Math.min(0.55, lvl * 4)); o.style.transform = 'scale(' + sc.toFixed(3) + ')'; }
+    call.orbRaf = requestAnimationFrame(callOrbLoop);
+  }
+  async function startCall() {
+    if (call) return;
+    document.getElementById('call-overlay').classList.add('on');
+    setCallStatus('connecting…');
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio:true });
+      const actx = new (window.AudioContext || window.webkitAudioContext)();
+      const src = actx.createMediaStreamSource(stream);
+      const analyser = actx.createAnalyser(); analyser.fftSize = 512; src.connect(analyser);
+      call = { stream, actx, analyser, data:new Uint8Array(analyser.frequencyBinCount), recorder:null, state:'listening', ending:false, vadRaf:0, orbRaf:0 };
+      callOrbLoop();
+      appendSystem('call started', true);
+      callListen();
+    } catch (e) { appendSystem('mic error: ' + e.message); endCall(); }
+  }
+  function callListen() {
+    if (!call || call.ending) return;
+    setCallState('listening'); setCallStatus('listening…');
+    let rec; try { rec = new MediaRecorder(call.stream); } catch (e) { appendSystem('call error: ' + e.message); return endCall(); }
+    const chunks = []; call.recorder = rec;
+    rec.ondataavailable = e => chunks.push(e.data);
+    let hadSpeech = false, speechStart = 0, lastLoud = performance.now(), started = performance.now();
+    rec.onstop = async () => {
+      if (!call || call.ending) return;
+      const spoke = hadSpeech && (performance.now() - speechStart > CALL_MIN_SPEECH_MS);
+      if (!spoke) { callListen(); return; }
+      await callProcess(new Blob(chunks, { type:'audio/webm' }));
+    };
+    rec.start();
+    const tick = () => {
+      if (!call || call.recorder !== rec || call.ending) return;
+      const lvl = callLevel(), now = performance.now();
+      if (lvl > CALL_SPEECH) { if (!hadSpeech) { hadSpeech = true; speechStart = now; } lastLoud = now; }
+      if ((hadSpeech && now - lastLoud > CALL_SILENCE_MS) || (now - started > CALL_MAX_MS)) {
+        if (rec.state === 'recording') rec.stop(); return;
+      }
+      call.vadRaf = requestAnimationFrame(tick);
+    };
+    call.vadRaf = requestAnimationFrame(tick);
+  }
+  async function callProcess(blob) {
+    setCallState('thinking'); setCallStatus('…'); window.__voiceLevel = 0;
+    let text = '';
+    try { const res = await fetch('/transcribe', { method:'POST', headers:{'Content-Type':'audio/webm'}, body:blob });
+      text = ((await res.json()).text || '').trim();
+    } catch (e) { appendSystem('call error: ' + e.message); }
+    if (!text) { callListen(); return; }              // silence/hallucination dropped by backend
+    appendUser(text);
+    if (isCallEnd(text)) { setCallState('speaking'); setCallStatus('goodbye'); await callSpeakFixed("Alright. Talk soon, Adnan."); endCall(); return; }
+    setCallState('speaking'); setCallStatus('Kamil…');
+    await callRespond(text);
+    if (call && !call.ending) callListen();
+  }
+  // Stream the voice reply and play it gaplessly on the call's audio context;
+  // resolves once the last chunk has finished playing (so we resume listening).
+  function callRespond(text) {
+    return new Promise(async (resolve) => {
+      const actx = call.actx; let nextStart = 0, scheduled = 0, lastEnd = 0, chain = Promise.resolve(), bubble = null;
+      const sched = (b64) => { chain = chain.then(async () => {
+        let ab; try { const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0)); ab = await actx.decodeAudioData(bytes.buffer); } catch { return; }
+        const s = actx.createBufferSource(); s.buffer = ab; s.connect(actx.destination);
+        const at = scheduled === 0 ? actx.currentTime + 0.2 : Math.max(actx.currentTime, nextStart);
+        s.start(at); nextStart = at + ab.duration; lastEnd = nextStart; scheduled++;
+      }); };
+      try {
+        const res = await fetch('/voice_chat_stream', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({content:text}) });
+        const reader = res.body.getReader(); const dec = new TextDecoder(); let buf = '';
+        while (true) {
+          const { done, value } = await reader.read(); if (done) break;
+          buf += dec.decode(value, { stream:true });
+          const lines = buf.split('\n'); buf = lines.pop();
+          for (const line of lines) {
+            if (!line.startsWith('data: ')) continue;
+            const d = line.slice(6); if (d === '[DONE]') continue;
+            let ev; try { ev = JSON.parse(d); } catch { continue; }
+            if (ev.type === 'text') { bubble = appendAssistant(ev.text || '', false); scrollBottom(); }
+            else if (ev.type === 'audio') sched(ev.audio);
+          }
+        }
+      } catch (e) { appendSystem('call error: ' + e.message); }
+      await chain;
+      const wait = Math.max(0, (lastEnd - actx.currentTime) * 1000);
+      setTimeout(resolve, wait + 150);
+    });
+  }
+  async function callSpeakFixed(text) {
+    appendAssistant(text, false);
+    try {
+      const res = await fetch('/synthesize', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({content:text}) });
+      const data = await res.json(); if (!data.audio || !call) return;
+      await new Promise(async (resolve) => {
+        let ab; try { const bytes = Uint8Array.from(atob(data.audio), c => c.charCodeAt(0)); ab = await call.actx.decodeAudioData(bytes.buffer); } catch { return resolve(); }
+        const s = call.actx.createBufferSource(); s.buffer = ab; s.connect(call.actx.destination); s.onended = resolve; s.start();
+      });
+    } catch {}
+  }
+  function endCall() {
+    document.getElementById('call-overlay').classList.remove('on');
+    if (!call) return;
+    call.ending = true;
+    try { if (call.recorder && call.recorder.state === 'recording') call.recorder.stop(); } catch {}
+    try { cancelAnimationFrame(call.vadRaf); cancelAnimationFrame(call.orbRaf); } catch {}
+    try { call.stream.getTracks().forEach(t => t.stop()); } catch {}
+    try { call.actx.close(); } catch {}
+    window.__voiceLevel = 0; call = null;
+    appendSystem('call ended', true);
+    setPresence('at rest', 'present');
   }
 
   // ── teach a doc ──
@@ -1003,7 +1166,7 @@
   function tick() { const d = new Date(); document.getElementById('clock').textContent = d.toLocaleDateString(undefined,{weekday:'short'}) + ', ' + d.toLocaleTimeString(undefined,{hour:'numeric',minute:'2-digit'}); }
   tick(); setInterval(tick, 30000);
   document.getElementById('web-q').addEventListener('keydown', e => { if (e.key === 'Enter') doWebSearch(); });
-  document.addEventListener('keydown', e => { if (e.key === 'Escape') closeGlance(); });
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') { closeGlance(); if (call) endCall(); } });
 
   restoreSession();
   setInterval(pollPresence, 30000);
