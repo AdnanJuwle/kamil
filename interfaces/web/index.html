@@ -1277,6 +1277,9 @@
                 case 'awaiting_confirmation':
                     appendSystem(`${ev.pending.length} action(s) need your approval`);
                     break;
+                case 'status':
+                    appendSystem(ev.text);
+                    break;
                 case 'error':
                     appendSystem('agent error: ' + (ev.error || 'unknown'));
                     break;

@@ -440,7 +440,23 @@ class Orchestrator:
             "say 'we need to look at the file' after you've already read it."
         )
 
+        # Route agent/coding work to the heavy tier (bigger model, RAM-offloaded),
+        # keeping the fast 8B for chat. Falls back to the chat model if unavailable.
         model_fn = lambda msgs: self.client.chat(msgs)
+        _heavy = None
+        if os.getenv("KAMIL_AGENT_HEAVY", "1") == "1":
+            try:
+                from core import heavy_tier
+                if heavy_tier.available():
+                    yield {"type": "status", "text": "spinning up the coding model…"}
+                    if heavy_tier.ensure_loaded():
+                        from models.client import LlamaClient
+                        _hc = LlamaClient(base_url=heavy_tier.HEAVY_URL)
+                        model_fn = lambda msgs: _hc.chat(msgs)
+                        _heavy = heavy_tier
+            except Exception as _e:
+                print(f"[orchestrator] heavy tier unavailable: {_e}")
+
         final_text = ""
         terminal = "done"
         for event in iter_agent(model_fn, messages, max_iters=max_iters,
@@ -449,6 +465,9 @@ class Orchestrator:
                 final_text = event["text"]
             terminal = event.get("type", terminal)
             yield event
+
+        if _heavy is not None:
+            _heavy.mark_activity()   # keep it warm for follow-up coding turns
 
         # Persist the turn once it completes (not while paused for confirmation).
         if terminal in ("done", "max_iterations") and final_text:
