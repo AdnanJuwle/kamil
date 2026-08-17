@@ -1,1431 +1,592 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Kamil</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500&family=IBM+Plex+Sans:wght@300;400;500&display=swap" rel="stylesheet">
-    <style>
-        :root {
-            --bg: #080808;
-            --surface: #0f0f0f;
-            --border: #1c1c1c;
-            --border-hover: #2a2a2a;
-            --text: #d4d4d4;
-            --text-muted: #525252;
-            --text-dim: #333333;
-            --accent: #3b82f6;
-            --accent-dim: #1d3b6e;
-            --user-accent: #404040;
-            --code-bg: #0a0a0a;
-            --input-bg: #111111;
-            --council-accent: #7c3aed;
-            --success: #22c55e;
-            --warning: #f59e0b;
-        }
-
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-
-        body {
-            background: var(--bg);
-            color: var(--text);
-            font-family: 'IBM Plex Sans', sans-serif;
-            font-weight: 300;
-            height: 100vh;
-            display: flex;
-            flex-direction: column;
-            overflow: hidden;
-            font-size: 14px;
-            letter-spacing: 0.01em;
-        }
-
-        /* Header */
-        #header {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            padding: 0 24px;
-            height: 52px;
-            border-bottom: 1px solid var(--border);
-            flex-shrink: 0;
-            background: var(--bg);
-        }
-
-        #header-left {
-            display: flex;
-            align-items: center;
-            gap: 20px;
-        }
-
-        #wordmark {
-            font-family: 'IBM Plex Mono', monospace;
-            font-size: 13px;
-            font-weight: 500;
-            letter-spacing: 0.15em;
-            color: var(--text);
-        }
-
-        #project-selector {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-
-        #project-select {
-            background: transparent;
-            border: 1px solid var(--border);
-            color: var(--text-muted);
-            padding: 4px 8px;
-            border-radius: 3px;
-            font-size: 11px;
-            font-family: 'IBM Plex Mono', monospace;
-            cursor: pointer;
-            outline: none;
-            letter-spacing: 0.05em;
-            transition: border-color 0.15s, color 0.15s;
-        }
-
-            #project-select:hover {
-                border-color: var(--border-hover);
-                color: var(--text);
-            }
-
-        #load-btn {
-            background: transparent;
-            border: 1px solid var(--border);
-            color: var(--text-muted);
-            padding: 4px 10px;
-            border-radius: 3px;
-            cursor: pointer;
-            font-size: 11px;
-            font-family: 'IBM Plex Mono', monospace;
-            letter-spacing: 0.08em;
-            transition: all 0.15s;
-        }
-
-            #load-btn:hover {
-                border-color: var(--accent);
-                color: var(--accent);
-            }
-
-            #load-btn:disabled {
-                opacity: 0.3;
-                cursor: not-allowed;
-            }
-
-        #project-status {
-            font-family: 'IBM Plex Mono', monospace;
-            font-size: 10px;
-            letter-spacing: 0.1em;
-            color: var(--text-dim);
-        }
-
-            #project-status.active {
-                color: var(--accent);
-            }
-
-            #project-status.loading {
-                color: var(--warning);
-            }
-
-        #header-right {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-        }
-
-        #memory-indicator {
-            font-family: 'IBM Plex Mono', monospace;
-            font-size: 10px;
-            letter-spacing: 0.1em;
-            color: var(--text-dim);
-            display: flex;
-            align-items: center;
-            gap: 6px;
-        }
-
-        #memory-dot {
-            width: 5px;
-            height: 5px;
-            border-radius: 50%;
-            background: var(--success);
-            opacity: 0.6;
-        }
-
-        #reset-btn {
-            background: transparent;
-            border: none;
-            color: var(--text-dim);
-            cursor: pointer;
-            font-size: 11px;
-            font-family: 'IBM Plex Mono', monospace;
-            letter-spacing: 0.08em;
-            padding: 4px 8px;
-            border-radius: 3px;
-            transition: color 0.15s;
-        }
-
-            #reset-btn:hover {
-                color: var(--text-muted);
-            }
-
-        /* Messages */
-        #messages {
-            flex: 1;
-            overflow-y: auto;
-            padding: 32px 0;
-            display: flex;
-            flex-direction: column;
-            gap: 0;
-        }
-
-            #messages::-webkit-scrollbar {
-                width: 3px;
-            }
-
-            #messages::-webkit-scrollbar-track {
-                background: transparent;
-            }
-
-            #messages::-webkit-scrollbar-thumb {
-                background: var(--border);
-                border-radius: 2px;
-            }
-
-        .message-row {
-            display: flex;
-            padding: 0 24px;
-            margin-bottom: 2px;
-            flex-shrink: 0;
-        }
-
-            .message-row.user {
-                justify-content: flex-end;
-            }
-
-            .message-row.assistant {
-                justify-content: flex-start;
-            }
-
-            .message-row.system-row {
-                justify-content: center;
-            }
-
-        .bubble {
-            max-width: 720px;
-            line-height: 1.65;
-            white-space: pre-wrap;
-            word-break: break-word;
-        }
-
-            .bubble.user {
-                color: var(--text-muted);
-                font-size: 13px;
-                padding: 10px 14px;
-                background: var(--surface);
-                border: 1px solid var(--border);
-                border-radius: 8px 8px 2px 8px;
-            }
-
-            .bubble.assistant {
-                color: var(--text);
-                font-size: 14px;
-                padding: 12px 16px 12px 14px;
-                border-left: 2px solid var(--accent);
-                margin-left: 2px;
-            }
-
-                .bubble.assistant.council-response {
-                    border-left-color: var(--council-accent);
-                }
-
-        .role-label {
-            font-family: 'IBM Plex Mono', monospace;
-            font-size: 9px;
-            letter-spacing: 0.15em;
-            margin-bottom: 6px;
-            display: block;
-        }
-
-            .role-label.kamil {
-                color: var(--accent);
-            }
-
-            .role-label.council {
-                color: var(--council-accent);
-            }
-
-        .system-msg {
-            font-family: 'IBM Plex Mono', monospace;
-            font-size: 10px;
-            color: var(--text-dim);
-            letter-spacing: 0.1em;
-            padding: 6px 0;
-        }
-
-        /* Code blocks */
-        .bubble pre {
-            background: var(--code-bg);
-            border: 1px solid var(--border);
-            border-radius: 4px;
-            padding: 12px 14px;
-            overflow-x: auto;
-            margin: 10px 0;
-            font-family: 'IBM Plex Mono', monospace;
-            font-size: 12px;
-            line-height: 1.6;
-        }
-
-        .bubble code {
-            font-family: 'IBM Plex Mono', monospace;
-            font-size: 12px;
-            background: var(--code-bg);
-            padding: 1px 5px;
-            border-radius: 2px;
-            color: #93c5fd;
-        }
-
-        .bubble pre code {
-            background: transparent;
-            padding: 0;
-            color: var(--text);
-        }
-
-        /* Cursor */
-        .cursor {
-            display: inline-block;
-            width: 1.5px;
-            height: 14px;
-            background: var(--accent);
-            margin-left: 2px;
-            vertical-align: middle;
-            animation: blink 1s infinite;
-        }
-
-        @keyframes blink {
-            0%, 49% {
-                opacity: 1;
-            }
-
-            50%, 100% {
-                opacity: 0;
-            }
-        }
-
-        /* Council block */
-        .council-block {
-            max-width: 720px;
-            margin: 0 24px;
-            border: 1px solid var(--border);
-            border-radius: 6px;
-            overflow: hidden;
-            flex-shrink: 0;
-            margin-bottom: 2px;
-        }
-
-        .council-section-label {
-            font-family: 'IBM Plex Mono', monospace;
-            font-size: 9px;
-            letter-spacing: 0.15em;
-            padding: 7px 14px;
-            border-bottom: 1px solid var(--border);
-        }
-
-            .council-section-label.analyst {
-                color: #22c55e;
-                background: #0a1a0a;
-            }
-
-            .council-section-label.advocate {
-                color: #f97316;
-                background: #1a0d00;
-            }
-
-            .council-section-label.synthesizer {
-                color: var(--council-accent);
-                background: #0e0a1a;
-            }
-
-        .council-section-body {
-            padding: 12px 14px;
-            font-size: 13px;
-            line-height: 1.65;
-            max-height: 220px;
-            overflow-y: auto;
-            white-space: pre-wrap;
-            word-break: break-word;
-        }
-
-            .council-section-body.analyst {
-                color: #a3d9a5;
-                background: #080d08;
-            }
-
-            .council-section-body.advocate {
-                color: #d4a0a0;
-                background: #0d0800;
-            }
-
-            .council-section-body.synthesizer {
-                color: var(--text);
-                background: #0a080f;
-            }
-
-            .council-section-body::-webkit-scrollbar {
-                width: 3px;
-            }
-
-            .council-section-body::-webkit-scrollbar-thumb {
-                background: var(--border);
-            }
-
-        /* Confirmation panel */
-        #confirm-panel {
-            position: fixed;
-            bottom: 90px;
-            left: 50%;
-            transform: translateX(-50%);
-            width: 680px;
-            max-width: calc(100vw - 48px);
-            background: var(--surface);
-            border: 1px solid var(--accent);
-            border-radius: 6px;
-            padding: 16px 18px;
-            z-index: 100;
-            display: none;
-        }
-
-            #confirm-panel.visible {
-                display: block;
-            }
-
-        .confirm-label {
-            font-family: 'IBM Plex Mono', monospace;
-            font-size: 9px;
-            letter-spacing: 0.15em;
-            color: var(--accent);
-            margin-bottom: 10px;
-        }
-
-        .confirm-detail {
-            background: var(--code-bg);
-            border: 1px solid var(--border);
-            border-radius: 4px;
-            padding: 10px 12px;
-            font-family: 'IBM Plex Mono', monospace;
-            font-size: 11px;
-            color: var(--text);
-            white-space: pre-wrap;
-            max-height: 120px;
-            overflow-y: auto;
-            margin-bottom: 12px;
-        }
-
-        .confirm-actions {
-            display: flex;
-            gap: 8px;
-            justify-content: flex-end;
-        }
-
-        .confirm-approve, .confirm-reject {
-            font-family: 'IBM Plex Mono', monospace;
-            font-size: 10px;
-            letter-spacing: 0.1em;
-            padding: 6px 14px;
-            border-radius: 3px;
-            cursor: pointer;
-            border: 1px solid;
-            background: transparent;
-            transition: all 0.15s;
-        }
-
-        .confirm-approve {
-            border-color: var(--success);
-            color: var(--success);
-        }
-
-            .confirm-approve:hover {
-                background: rgba(34, 197, 94, 0.1);
-            }
-
-        .confirm-reject {
-            border-color: #ef4444;
-            color: #ef4444;
-        }
-
-            .confirm-reject:hover {
-                background: rgba(239, 68, 68, 0.1);
-            }
-
-        /* Enroll modal */
-        #enroll-modal {
-            display: none;
-            position: fixed;
-            inset: 0;
-            background: rgba(0,0,0,0.7);
-            z-index: 200;
-            align-items: center;
-            justify-content: center;
-        }
-
-            #enroll-modal.visible {
-                display: flex;
-            }
-
-        #enroll-modal-box {
-            background: var(--surface);
-            border: 1px solid var(--border);
-            border-radius: 6px;
-            padding: 24px;
-            width: 320px;
-            display: flex;
-            flex-direction: column;
-            gap: 12px;
-        }
-
-        #enroll-modal-title {
-            font-family: 'IBM Plex Mono', monospace;
-            font-size: 11px;
-            letter-spacing: 0.15em;
-            color: var(--accent);
-        }
-
-        #enroll-name, #enroll-trust {
-            background: var(--input-bg);
-            border: 1px solid var(--border);
-            border-radius: 4px;
-            color: var(--text);
-            padding: 8px 10px;
-            font-size: 12px;
-            font-family: 'IBM Plex Mono', monospace;
-            outline: none;
-            width: 100%;
-        }
-
-            #enroll-name:focus, #enroll-trust:focus {
-                border-color: var(--border-hover);
-            }
-
-        #enroll-modal-actions {
-            display: flex;
-            gap: 8px;
-            justify-content: flex-end;
-        }
-
-            #enroll-modal-actions button {
-                font-family: 'IBM Plex Mono', monospace;
-                font-size: 10px;
-                letter-spacing: 0.1em;
-                padding: 6px 14px;
-                border-radius: 3px;
-                cursor: pointer;
-                background: transparent;
-                border: 1px solid var(--border);
-                color: var(--text-muted);
-                transition: all 0.15s;
-            }
-
-        #enroll-start-btn {
-            border-color: var(--accent) !important;
-            color: var(--accent) !important;
-        }
-
-        /* Input area */
-        #input-area {
-            border-top: 1px solid var(--border);
-            padding: 12px 24px 16px;
-            flex-shrink: 0;
-            background: var(--bg);
-        }
-
-        #input-wrap {
-            max-width: 720px;
-            margin: 0 auto;
-        }
-
-        #input-toolbar {
-            display: flex;
-            align-items: center;
-            gap: 6px;
-            margin-bottom: 8px;
-            opacity: 1;
-            transition: opacity 0.2s;
-        }
-
-        #input-wrap:not(:focus-within) #input-toolbar {
-            opacity: 0.3;
-        }
-
-        #input-wrap:hover #input-toolbar,
-        #input-wrap:focus-within #input-toolbar {
-            opacity: 1;
-        }
-
-        .toolbar-btn {
-            background: transparent;
-            border: 1px solid var(--border);
-            color: var(--text-muted);
-            cursor: pointer;
-            padding: 4px 10px;
-            border-radius: 3px;
-            font-size: 10px;
-            font-family: 'IBM Plex Mono', monospace;
-            letter-spacing: 0.1em;
-            transition: all 0.15s;
-            white-space: nowrap;
-        }
-
-            .toolbar-btn:hover {
-                border-color: var(--border-hover);
-                color: var(--text);
-            }
-
-            .toolbar-btn.active {
-                border-color: #ef4444;
-                color: #ef4444;
-                animation: pulse 1s infinite;
-            }
-
-            .toolbar-btn.enroll {
-                margin-left: auto;
-            }
-
-                .toolbar-btn.enroll:hover {
-                    border-color: var(--accent);
-                    color: var(--accent);
-                }
-
-        #input-row {
-            display: flex;
-            align-items: flex-end;
-            gap: 8px;
-        }
-
-        #input {
-            flex: 1;
-            background: var(--input-bg);
-            border: 1px solid var(--border);
-            border-radius: 6px;
-            color: var(--text);
-            padding: 12px 14px;
-            font-size: 13px;
-            font-family: 'IBM Plex Sans', sans-serif;
-            font-weight: 300;
-            resize: none;
-            min-height: 46px;
-            max-height: 180px;
-            outline: none;
-            transition: border-color 0.15s;
-            line-height: 1.6;
-            letter-spacing: 0.01em;
-        }
-
-            #input:focus {
-                border-color: var(--border-hover);
-            }
-
-            #input::placeholder {
-                color: var(--text-dim);
-            }
-
-        #send-btn {
-            background: transparent;
-            border: 1px solid var(--border);
-            color: var(--text-dim);
-            cursor: pointer;
-            padding: 8px 12px;
-            border-radius: 6px;
-            transition: all 0.15s;
-            font-family: 'IBM Plex Mono', monospace;
-            font-size: 13px;
-            height: 46px;
-            flex-shrink: 0;
-        }
-
-            #send-btn:hover {
-                border-color: var(--accent);
-                color: var(--accent);
-            }
-
-            #send-btn:disabled {
-                opacity: 0.2;
-                cursor: not-allowed;
-            }
-
-        #input-hint {
-            font-family: 'IBM Plex Mono', monospace;
-            font-size: 10px;
-            color: var(--text-dim);
-            letter-spacing: 0.08em;
-            margin-top: 8px;
-            text-align: center;
-        }
-
-            #input-hint span {
-                color: var(--text-muted);
-            }
-
-        @keyframes pulse {
-            0%, 100% {
-                opacity: 1;
-            }
-
-            50% {
-                opacity: 0.4;
-            }
-        }
-
-        .council-section-body::-webkit-scrollbar-track {
-            background: transparent;
-        }
-        .md-code {
-            background: #0b0b0b;
-            border: 1px solid #222;
-            border-radius: 8px;
-            padding: 12px 14px;
-            margin: 8px 0;
-            overflow-x: auto;
-            font-family: 'Cascadia Code', 'Consolas', 'SF Mono', monospace;
-            font-size: 12.5px;
-            line-height: 1.5;
-            color: #d6d6d6;
-            white-space: pre;
-        }
-        .md-code code { background: none; padding: 0; color: inherit; }
-        .md-inline {
-            background: #1a1a1a;
-            border-radius: 4px;
-            padding: 1px 5px;
-            font-family: 'Cascadia Code', 'Consolas', monospace;
-            font-size: 0.9em;
-            color: #e0b0ff;
-        }
-    </style>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Kamil</title>
+<style>
+  :root {
+    --bg:#14110E; --raised:#1E1913; --raised-2:#241E17; --line:#2E2820; --line-soft:#221D17;
+    --ink:#ECE4D6; --muted:#9A9082; --faint:#6C6458;
+    --life:#E8B24C; --life-deep:#B47F2E; --life-glow:rgba(232,178,76,.16);
+    --machine:#5AA896; --crit:#C85A43;
+    --serif:"Iowan Old Style","Palatino Linotype",Palatino,"Book Antiqua",Georgia,serif;
+    --sans:ui-sans-serif,-apple-system,"Segoe UI",Roboto,system-ui,sans-serif;
+    --mono:"Cascadia Code",ui-monospace,"SF Mono","Consolas",monospace;
+  }
+  * { box-sizing:border-box; }
+  html,body { margin:0; height:100%; }
+  body { background:var(--bg); color:var(--ink); font-family:var(--sans); font-size:14px;
+    line-height:1.6; -webkit-font-smoothing:antialiased; height:100vh; overflow:hidden; }
+  ::selection { background:rgba(232,178,76,.25); }
+  button { font-family:inherit; }
+  .app { display:grid; grid-template-rows:50px 1fr; height:100vh; }
+
+  /* top bar */
+  .topbar { display:flex; align-items:center; gap:20px; padding:0 18px; border-bottom:1px solid var(--line);
+    background:linear-gradient(180deg,var(--raised),transparent); }
+  .brand { display:flex; align-items:baseline; gap:8px; }
+  .brand .n { font-family:var(--serif); font-size:19px; letter-spacing:.02em; }
+  .brand .ar { font-size:16px; color:var(--life); opacity:.85; }
+  .brand .pr { font-family:var(--mono); font-size:9.5px; letter-spacing:.18em; text-transform:uppercase;
+    color:var(--life); display:flex; align-items:center; gap:5px; margin-left:4px; }
+  .pdot { width:5px; height:5px; border-radius:50%; background:var(--life); box-shadow:0 0 7px var(--life);
+    animation:breathe 3.4s ease-in-out infinite; }
+  .tiers { display:flex; gap:6px; margin-left:6px; }
+  .chip { display:flex; align-items:center; gap:6px; padding:4px 9px; border-radius:20px; border:1px solid var(--line);
+    font-family:var(--mono); font-size:10px; color:var(--faint); white-space:nowrap; }
+  .chip .led { width:6px; height:6px; border-radius:50%; background:var(--faint); }
+  .chip.live { border-color:rgba(232,178,76,.3); color:var(--muted); } .chip.live .led{ background:var(--life); box-shadow:0 0 7px var(--life);}
+  .chip.warm { border-color:rgba(90,168,150,.28); color:var(--muted); } .chip.warm .led{ background:var(--machine); box-shadow:0 0 6px var(--machine);}
+  .chip b { color:var(--ink); font-weight:500; }
+  .topbar .right { margin-left:auto; display:flex; align-items:center; gap:14px; font-family:var(--mono);
+    font-size:11px; color:var(--muted); }
+  .topbar .right .blk { color:var(--machine); }
+  .topbar .right .sep { width:1px; height:16px; background:var(--line); }
+  .topbar select, .topbar .tbtn { background:var(--raised-2); color:var(--muted); border:1px solid var(--line);
+    border-radius:7px; padding:4px 8px; font-family:var(--mono); font-size:10.5px; cursor:pointer; }
+  .topbar .tbtn:hover { color:var(--ink); }
+  #project-status { font-family:var(--mono); font-size:10px; color:var(--faint); }
+  #project-status.active { color:var(--machine); } #project-status.loading { color:var(--life); }
+
+  .body { display:grid; grid-template-columns:64px 1fr 316px; min-height:0; }
+
+  /* facets rail */
+  .rail { border-right:1px solid var(--line); display:flex; flex-direction:column; align-items:center;
+    padding:14px 0; gap:3px; }
+  .glyph { width:42px; height:42px; border-radius:12px; display:grid; place-items:center; color:var(--faint);
+    cursor:pointer; position:relative; transition:.2s; }
+  .glyph svg { width:19px; height:19px; }
+  .glyph:hover { color:var(--muted); background:var(--raised-2); }
+  .glyph.on { color:var(--life); background:var(--life-glow); }
+  .glyph.on::before { content:""; position:absolute; left:-14px; top:11px; bottom:11px; width:2px; border-radius:2px; background:var(--life); }
+  .glyph small { position:absolute; left:52px; white-space:nowrap; background:var(--raised-2); border:1px solid var(--line);
+    padding:3px 8px; border-radius:6px; font-size:11px; color:var(--muted); opacity:0; pointer-events:none; transition:.15s; z-index:5; }
+  .glyph:hover small { opacity:1; }
+  .rail .spacer { flex:1; }
+
+  /* work surface */
+  .surface { display:flex; flex-direction:column; min-height:0; }
+  #messages { flex:1; overflow-y:auto; padding:24px 40px 8px; }
+  #messages::-webkit-scrollbar { width:9px; } #messages::-webkit-scrollbar-thumb { background:var(--line); border-radius:9px; }
+  .turn { display:grid; grid-template-columns:78px 1fr; gap:0 22px; padding:15px 0; border-top:1px solid var(--line-soft); }
+  .turn:first-child { border-top:none; }
+  .who { font-family:var(--mono); font-size:11px; letter-spacing:.12em; text-transform:uppercase; padding-top:3px; }
+  .who.adnan { color:var(--muted); } .who.kamil { color:var(--life); } .who.council { color:var(--machine); }
+  .say { max-width:66ch; overflow-wrap:anywhere; }
+  .say p { margin:0 0 10px; } .say p:last-child { margin-bottom:0; }
+  .sys-line { font-family:var(--mono); font-size:11px; color:var(--faint); padding:5px 0 5px 100px;
+    letter-spacing:.02em; }
+  .sys-line.reach { color:var(--life); }
+  .cursor { display:inline-block; width:7px; height:15px; background:var(--life); margin-left:2px;
+    vertical-align:text-bottom; animation:blink 1s step-end infinite; }
+  .md-code { background:#0C0A07; border:1px solid var(--line); border-left:2px solid var(--machine); border-radius:9px;
+    padding:12px 14px; margin:8px 0; overflow-x:auto; font-family:var(--mono); font-size:12.5px; line-height:1.55;
+    color:#D7CFC1; white-space:pre; }
+  .md-code code { background:none; padding:0; color:inherit; }
+  .md-inline { background:#0E0C09; border:1px solid var(--line); border-radius:5px; padding:1px 6px;
+    font-family:var(--mono); font-size:.86em; color:#EAC98A; }
+  .council-block { border:1px solid var(--line); border-radius:12px; overflow:hidden; margin:8px 0 8px 100px; max-width:66ch; }
+  .council-section-label { font-family:var(--mono); font-size:10px; letter-spacing:.16em; text-transform:uppercase;
+    padding:9px 14px 4px; color:var(--faint); }
+  .council-section-label.analyst { color:var(--machine); } .council-section-label.advocate { color:var(--crit); }
+  .council-section-label.synthesizer { color:var(--life); }
+  .council-section-body { padding:0 14px 12px; color:var(--muted); font-size:13px; white-space:pre-wrap; border-bottom:1px solid var(--line-soft); }
+  .council-section-body:last-child { border-bottom:none; }
+
+  /* composer */
+  .composer { padding:12px 40px 20px; background:linear-gradient(180deg,transparent,var(--bg) 30%); }
+  .comptools { display:flex; gap:6px; margin-bottom:8px; }
+  .comptool { background:none; border:1px solid var(--line); color:var(--faint); border-radius:8px; padding:5px 10px;
+    font-family:var(--mono); font-size:10.5px; cursor:pointer; transition:.15s; }
+  .comptool:hover { color:var(--muted); border-color:var(--life-deep); }
+  .comptool.active { color:var(--life); border-color:var(--life); }
+  .field { display:flex; align-items:flex-end; gap:12px; background:var(--raised-2); border:1px solid var(--line);
+    border-radius:14px; padding:11px 14px; }
+  .field:focus-within { border-color:var(--life-deep); }
+  .field textarea { flex:1; background:none; border:none; outline:none; color:var(--ink); font-family:var(--sans);
+    font-size:14px; line-height:1.5; resize:none; max-height:180px; }
+  .field textarea::placeholder { color:var(--faint); }
+  .field .send { width:32px; height:32px; border-radius:9px; background:var(--life); color:#1B1509; border:none;
+    display:grid; place-items:center; cursor:pointer; font-size:16px; flex:none; }
+  .field .send:disabled { opacity:.4; cursor:default; }
+  .hint { font-family:var(--mono); font-size:10px; color:var(--faint); margin-top:8px; letter-spacing:.03em; }
+  .hint b { color:var(--muted); font-weight:500; }
+
+  /* presence */
+  .presence { border-left:1px solid var(--line); position:relative; display:flex; flex-direction:column;
+    align-items:center; text-align:center; padding:34px 26px; overflow:hidden;
+    background:radial-gradient(120% 66% at 50% 20%, rgba(232,178,76,.06), transparent 62%); }
+  #core { width:208px; height:208px; }
+  #p-state { font-family:var(--serif); font-style:italic; font-size:17px; color:var(--ink); margin-top:4px; min-height:26px; }
+  #p-mood { font-family:var(--mono); font-size:10px; letter-spacing:.16em; text-transform:uppercase; color:var(--faint); margin-top:8px; }
+  .holding { margin-top:auto; padding-top:24px; display:flex; flex-direction:column; gap:15px; max-width:250px; width:100%; }
+  .holding .lead { font-family:var(--mono); font-size:9.5px; letter-spacing:.2em; text-transform:uppercase; color:var(--faint); }
+  .hold { font-family:var(--serif); font-style:italic; font-size:14px; line-height:1.5; color:#CFC6B6; }
+  .hold .src { display:block; font-family:var(--mono); font-style:normal; font-size:9.5px; letter-spacing:.08em;
+    text-transform:uppercase; color:var(--faint); margin-top:5px; }
+
+  /* overlays */
+  #confirm-panel { position:fixed; right:24px; bottom:24px; width:360px; background:var(--raised-2);
+    border:1px solid var(--life-deep); border-radius:14px; padding:16px; z-index:50; display:none;
+    box-shadow:0 20px 60px rgba(0,0,0,.5); }
+  #confirm-panel.visible { display:block; }
+  .confirm-label { font-family:var(--mono); font-size:10px; letter-spacing:.16em; text-transform:uppercase; color:var(--life); margin-bottom:10px; }
+  .confirm-detail { font-family:var(--mono); font-size:11px; color:var(--muted); background:#0C0A07; border:1px solid var(--line);
+    border-radius:8px; padding:10px; white-space:pre-wrap; max-height:200px; overflow:auto; margin-bottom:12px; }
+  .confirm-actions { display:flex; gap:8px; justify-content:flex-end; }
+  .confirm-actions button { border:none; border-radius:8px; padding:8px 16px; font-size:12.5px; cursor:pointer; }
+  .confirm-reject { background:var(--raised); color:var(--muted); border:1px solid var(--line) !important; }
+  .confirm-approve { background:var(--life); color:#1B1509; }
+  #enroll-modal { position:fixed; inset:0; background:rgba(10,8,6,.7); display:none; place-items:center; z-index:60; }
+  #enroll-modal.visible { display:grid; }
+  #enroll-modal-box { background:var(--raised-2); border:1px solid var(--line); border-radius:16px; padding:22px; width:320px; display:flex; flex-direction:column; gap:12px; }
+  #enroll-modal-title { font-family:var(--mono); font-size:11px; letter-spacing:.16em; text-transform:uppercase; color:var(--life); }
+  #enroll-modal input, #enroll-modal select { background:var(--raised); border:1px solid var(--line); border-radius:8px; padding:9px 11px; color:var(--ink); font-family:var(--sans); }
+  #enroll-modal-actions { display:flex; gap:8px; justify-content:flex-end; }
+  #enroll-modal-actions button { border:1px solid var(--line); background:var(--raised); color:var(--muted); border-radius:8px; padding:8px 14px; cursor:pointer; }
+  #enroll-start-btn { background:var(--life); color:#1B1509; border:none !important; }
+
+  @keyframes breathe { 0%,100%{opacity:.5;transform:scale(.85)} 50%{opacity:1;transform:scale(1.15)} }
+  @keyframes blink { 50%{opacity:0} }
+  @media (prefers-reduced-motion: reduce){ .pdot,.cursor{animation:none} }
+  @media (max-width:1000px){ .body{grid-template-columns:56px 1fr} .presence{display:none} }
+</style>
 </head>
 <body>
-
-    <div id="header">
-        <div id="header-left">
-            <div id="wordmark">KAMIL</div>
-            <div id="project-selector">
-                <select id="project-select"><option value="">no project</option></select>
-                <button id="load-btn" onclick="loadProject()">load</button>
-                <span id="project-status">—</span>
-            </div>
-        </div>
-        <div id="header-right">
-            <div id="memory-indicator">
-                <div id="memory-dot"></div>
-                <span id="memory-label">memory active</span>
-            </div>
-            <button id="reset-btn" onclick="resetChat()">clear</button>
-        </div>
+<div class="app">
+  <header class="topbar">
+    <div class="brand"><span class="n">Kamil</span><span class="ar">كامل</span>
+      <span class="pr"><span class="pdot"></span> present</span></div>
+    <div class="tiers">
+      <span class="chip live" id="tier-chat"><span class="led"></span>chat <b>lexi-8b</b></span>
+      <span class="chip" id="tier-heavy"><span class="led"></span>heavy <b>coder-14b</b></span>
+      <span class="chip" id="tier-max"><span class="led"></span>max <b>35b · ram</b></span>
     </div>
-
-    <div id="messages">
-        <div class="message-row system-row">
-            <span class="system-msg">kamil · local · offline · type /council for deliberation</span>
-        </div>
+    <div class="right">
+      <select id="project-select"><option value="">no project</option></select>
+      <button class="tbtn" id="load-btn" onclick="loadProject()">load</button>
+      <span id="project-status">—</span>
+      <span class="sep"></span>
+      <span id="clock">—</span>
+      <button class="tbtn" id="reset-btn" onclick="resetChat()">clear</button>
     </div>
+  </header>
 
-    <div id="confirm-panel">
-        <div class="confirm-label">ACTION REQUIRES APPROVAL</div>
-        <div class="confirm-detail" id="confirm-detail"></div>
-        <div class="confirm-actions">
-            <button class="confirm-reject" onclick="confirmReject()">reject</button>
-            <button class="confirm-approve" onclick="confirmApprove()">approve</button>
+  <div class="body">
+    <nav class="rail">
+      <div class="glyph on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="3.2"/><circle cx="12" cy="12" r="8.5" opacity=".5"/></svg><small>Now</small></div>
+      <div class="glyph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 6h16M4 12h11M4 18h7"/></svg><small>Talk</small></div>
+      <div class="glyph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M8 6l-4 6 4 6M16 6l4 6-4 6"/></svg><small>Work</small></div>
+      <div class="glyph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 3v18M4 8c4-3 12-3 16 0M4 16c4 3 12 3 16 0"/></svg><small>Memory</small></div>
+      <div class="glyph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M6 4h9l3 3v13H6zM9 9h6M9 13h6"/></svg><small>Skills</small></div>
+      <div class="glyph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5c3 3 3 14 0 17M12 3.5c-3 3-3 14 0 17"/></svg><small>Web</small></div>
+      <div class="spacer"></div>
+      <div class="glyph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 2l2.5 5 5.5.8-4 4 1 5.5L12 20l-5 2.8 1-5.5-4-4L10.5 7z"/></svg><small>Sealed directive</small></div>
+      <div class="glyph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6"/></svg><small>Adnan · owner</small></div>
+    </nav>
+
+    <main class="surface">
+      <div id="messages"></div>
+      <div class="composer">
+        <div class="comptools">
+          <button class="comptool" id="mic-btn" onclick="toggleMic()">◎ mic</button>
+          <button class="comptool" id="learn-btn" onclick="teachDoc()">＋ teach a doc</button>
+          <button class="comptool" id="enroll-btn" onclick="enrollVoice()">enroll voice</button>
+          <input type="file" id="learn-file" accept=".pdf,.epub,.txt,.md,.markdown,.rst,.mobi,.chm" style="display:none" onchange="uploadDoc(this.files[0])">
         </div>
-    </div>
-
-    <!-- Enroll modal -->
-    <div id="enroll-modal">
-        <div id="enroll-modal-box">
-            <div id="enroll-modal-title">ENROLL VOICE</div>
-            <input id="enroll-name" type="text" placeholder="name" />
-            <select id="enroll-trust">
-                <option value="owner">owner</option>
-                <option value="trusted" selected>trusted</option>
-                <option value="guest">guest</option>
-            </select>
-            <div id="enroll-modal-actions">
-                <button onclick="closeEnrollModal()">cancel</button>
-                <button id="enroll-start-btn" onclick="startEnrollment()">start recording</button>
-            </div>
+        <div class="field">
+          <textarea id="input" rows="1" placeholder="say something to Kamil…"></textarea>
+          <button class="send" id="send-btn" onclick="sendMessage()" aria-label="send">↑</button>
         </div>
+        <div class="hint">enter to send · shift+enter for newline · <b>/agent</b> to work · <b>/council</b> to deliberate</div>
+      </div>
+    </main>
+
+    <aside class="presence">
+      <canvas id="core" width="416" height="416"></canvas>
+      <div id="p-state">present</div>
+      <div id="p-mood">at rest</div>
+      <div class="holding">
+        <span class="lead">holding</span>
+        <div class="hold" id="hold-1">Adnan built me — I run on his machine, for him.<span class="src">my memory</span></div>
+      </div>
+    </aside>
+  </div>
+</div>
+
+<div id="confirm-panel">
+  <div class="confirm-label">action requires approval</div>
+  <div class="confirm-detail" id="confirm-detail"></div>
+  <div class="confirm-actions">
+    <button class="confirm-reject" onclick="confirmReject()">reject</button>
+    <button class="confirm-approve" onclick="confirmApprove()">approve</button>
+  </div>
+</div>
+
+<div id="enroll-modal">
+  <div id="enroll-modal-box">
+    <div id="enroll-modal-title">enroll voice</div>
+    <input id="enroll-name" type="text" placeholder="name" />
+    <select id="enroll-trust"><option value="owner">owner</option><option value="trusted" selected>trusted</option><option value="guest">guest</option></select>
+    <div id="enroll-modal-actions">
+      <button onclick="closeEnrollModal()">cancel</button>
+      <button id="enroll-start-btn" onclick="startEnrollment()">start recording</button>
     </div>
+  </div>
+</div>
 
-    <div id="input-area">
-        <div id="input-wrap">
-            <div id="input-toolbar">
-                <button id="mic-btn" class="toolbar-btn" onclick="toggleMic()">mic</button>
-                <button id="enroll-btn" class="toolbar-btn enroll" onclick="enrollVoice()">enroll voice</button>
-                <button id="learn-btn" class="toolbar-btn" onclick="teachDoc()">teach a doc</button>
-                <input type="file" id="learn-file" accept=".pdf,.epub,.txt,.md,.markdown,.rst,.mobi,.chm" style="display:none" onchange="uploadDoc(this.files[0])">
-            </div>
-            <div id="input-row">
-                <textarea id="input" placeholder="ask kamil anything..." rows="1"></textarea>
-                <button id="send-btn" onclick="sendMessage()">↑</button>
-            </div>
-        </div>
-        <div id="input-hint">enter to send · shift+enter for newline · <span>/council</span> deliberation · <span>/agent</span> tool use</div>
-    </div>
+<script>
+  const messagesEl = document.getElementById('messages');
+  const inputEl = document.getElementById('input');
+  const sendBtn = document.getElementById('send-btn');
+  const projectSelect = document.getElementById('project-select');
+  const projectStatus = document.getElementById('project-status');
+  const loadBtn = document.getElementById('load-btn');
+  let agentApprovalResolve = null;
+  let mediaRecorder = null, audioChunks = [], isRecording = false, currentAudio = null, disabledTimeout = null;
 
-    <script>
-        const messagesEl = document.getElementById('messages');
-        const inputEl = document.getElementById('input');
-        const sendBtn = document.getElementById('send-btn');
-        const projectSelect = document.getElementById('project-select');
-        const projectStatus = document.getElementById('project-status');
-        const loadBtn = document.getElementById('load-btn');
+  // ── presence state ──
+  function setPresence(mood, line) {
+    const m = document.getElementById('p-mood'), s = document.getElementById('p-state');
+    if (m) m.textContent = mood;
+    if (s && line !== undefined) s.textContent = line;
+  }
 
-        let agentApprovalResolve = null;   // set while an agent run awaits approval
+  function setDisabled(val) {
+    sendBtn.disabled = val;
+    if (disabledTimeout) clearTimeout(disabledTimeout);
+    if (val) { setPresence('thinking', '…'); disabledTimeout = setTimeout(() => { if (sendBtn.disabled) setDisabled(false); }, 120000); }
+    else { setPresence('at rest', 'present'); }
+  }
 
-        // Voice variables
-        let mediaRecorder = null;
-        let audioChunks = [];
-        let isRecording = false;
-        let currentAudio = null;
+  // ── transcript rendering ──
+  function scrollBottom() { messagesEl.scrollTop = messagesEl.scrollHeight; }
+  function appendSystem(text, reach) {
+    const row = document.createElement('div');
+    row.className = 'sys-line' + (reach ? ' reach' : '');
+    row.textContent = text;
+    messagesEl.appendChild(row); scrollBottom();
+    return row;
+  }
+  function appendUser(text) {
+    const row = document.createElement('div'); row.className = 'turn';
+    row.innerHTML = '<div class="who adnan">Adnan</div><div class="say"></div>';
+    row.querySelector('.say').textContent = text;
+    messagesEl.appendChild(row); scrollBottom();
+  }
+  function appendAssistant(text, isCouncil) {
+    const row = document.createElement('div'); row.className = 'turn';
+    row.innerHTML = '<div class="who ' + (isCouncil ? 'council' : 'kamil') + '">' + (isCouncil ? 'Council' : 'Kamil') + '</div><div class="say"></div>';
+    const content = row.querySelector('.say');
+    if (text) content.innerHTML = mdToHtml(text);
+    messagesEl.appendChild(row); scrollBottom();
+    return content;
+  }
+  function appendProactive(text) { appendSystem('kamil reached out', true); appendAssistant(text, false); }
 
-        let disabledTimeout = null;        // track the hang‑timeout
+  function escapeHtml(t) { return t.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+  function hideTools(t) {
+    let cut = t.length;
+    for (const m of ['```tool','```json','{"tool"','{ "tool"',"{'tool'"]) { const i=t.indexOf(m); if (i!==-1&&i<cut) cut=i; }
+    return t.slice(0, cut).trimEnd();
+  }
+  function mdToHtml(src) {
+    const blocks = [];
+    src = String(src).replace(/```(\w*)\n?([\s\S]*?)```/g, (_, l, code) => {
+      blocks.push('<pre class="md-code"><code>' + escapeHtml(code.replace(/\n$/, '')) + '</code></pre>');
+      return ' B' + (blocks.length - 1) + ' ';
+    });
+    let h = escapeHtml(src);
+    h = h.replace(/`([^`\n]+)`/g, '<code class="md-inline">$1</code>');
+    h = h.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+    h = h.replace(/^#{1,6}\s+(.+)$/gm, '<strong>$1</strong>');
+    h = h.replace(/^\s*[-*]\s+(.+)$/gm, '&bull; $1');
+    h = h.replace(/\n/g, '<br>');
+    h = h.replace(/ B(\d+) /g, (_, i) => blocks[+i]);
+    return h;
+  }
 
-        function setDisabled(val) {
-            sendBtn.disabled = val;
-            inputEl.disabled = val;
+  inputEl.addEventListener('input', () => { inputEl.style.height='auto'; inputEl.style.height=Math.min(inputEl.scrollHeight,180)+'px'; });
+  inputEl.addEventListener('keydown', e => { if (e.key==='Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } });
 
-            // clear any previous timeout
-            if (disabledTimeout) clearTimeout(disabledTimeout);
+  async function sendMessage() {
+    const text = inputEl.value.trim();
+    if (!text || sendBtn.disabled) return;
+    inputEl.value = ''; inputEl.style.height = 'auto';
+    setDisabled(true); appendUser(text);
 
-            if (val) {
-                // Auto‑reset after 30 seconds in case of a hang
-                disabledTimeout = setTimeout(() => {
-                    if (sendBtn.disabled) {
-                        console.log('Auto‑resetting disabled state after timeout');
-                        setDisabled(false);
-                    }
-                }, 120000);
+    if (text.startsWith('/council')) { await sendCouncil(text.slice(8).trim()); setDisabled(false); inputEl.focus(); return; }
+    if (text.startsWith('/agent')) { await sendAgent(text.slice(6).trim()); setDisabled(false); inputEl.focus(); return; }
+
+    const contentEl = appendAssistant('', false);
+    contentEl.textContent = 'thinking…';
+    const cursor = document.createElement('span'); cursor.className = 'cursor';
+    contentEl.parentElement.appendChild(cursor);
+    let fullText = '', firstChunk = true;
+    try {
+      const res = await fetch('/chat', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({content:text}) });
+      const reader = res.body.getReader(); const decoder = new TextDecoder(); let buffer='';
+      while (true) {
+        const { done, value } = await reader.read(); if (done) break;
+        buffer += decoder.decode(value, {stream:true});
+        const lines = buffer.split('\n'); buffer = lines.pop();
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          const data = line.slice(6); if (data === '[DONE]') continue;
+          try {
+            const parsed = JSON.parse(data);
+            if (parsed.chunk) {
+              if (firstChunk) { fullText=''; firstChunk=false; setPresence('speaking','…'); }
+              fullText += parsed.chunk;
+              contentEl.textContent = hideTools(fullText);
+              contentEl.parentElement.appendChild(cursor); scrollBottom();
             }
+            if (parsed.error) contentEl.textContent = 'Error: ' + parsed.error;
+          } catch {}
         }
+      }
+    } catch (e) { contentEl.textContent = 'Connection error: ' + e.message; }
+    finally {
+      if (cursor && cursor.parentElement) cursor.remove();
+      if (!firstChunk && !contentEl.textContent.trim()) contentEl.textContent = '✓ noted';
+      else if (fullText.trim()) contentEl.innerHTML = mdToHtml(hideTools(fullText));
+      setDisabled(false); inputEl.focus();
+    }
+  }
 
-        async function toggleMic() {
-            // Interrupt any currently playing audio
-            if (currentAudio) {
-                currentAudio.pause();
-                currentAudio.src = '';
-                currentAudio = null;
-            }
-            if (isRecording) {
-                mediaRecorder.stop();
-                return;
-            }
-            try {
-                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-                audioChunks = [];
-                mediaRecorder = new MediaRecorder(stream);
-                mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
-                mediaRecorder.onstop = async () => {
-                    stream.getTracks().forEach(t => t.stop());
-                    document.getElementById('mic-btn').classList.remove('active');
-                    isRecording = false;
+  async function sendCouncil(text) {
+    const sys = appendSystem('council deliberating…');
+    try {
+      const res = await fetch('/council', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({content:text}) });
+      const data = await res.json();
+      sys.remove();
+      if (data.error) { appendSystem('council error: ' + data.error); return; }
+      const block = document.createElement('div'); block.className = 'council-block';
+      block.innerHTML =
+        '<div class="council-section-label analyst">Analyst</div><div class="council-section-body analyst">'+escapeHtml(data.analyst||'')+'</div>'+
+        '<div class="council-section-label advocate">Devil\'s Advocate</div><div class="council-section-body advocate">'+escapeHtml(data.advocate||'')+'</div>'+
+        '<div class="council-section-label synthesizer">Synthesizer</div><div class="council-section-body synthesizer">'+escapeHtml(data.synthesizer||'')+'</div>';
+      messagesEl.appendChild(block); scrollBottom();
+    } catch (e) { appendSystem('council error: ' + e.message); }
+  }
 
-                    // Guard: prevent double processing if onstop fires twice
-                    if (audioChunks.length === 0) return;
+  // ── agent ──
+  async function sendAgent(text) {
+    if (!text) { appendSystem('usage: /agent <task>'); return; }
+    setPresence('working', 'on it…');
+    const ctx = { bubble:null };
+    try { await runAgentStream(fetch('/chat_agent', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({content:text})}), ctx); }
+    catch (e) { appendSystem('agent error: ' + e.message); }
+  }
+  async function runAgentStream(fetchPromise, ctx) {
+    const res = await fetchPromise;
+    const pause = await processAgentStream(res, ctx);
+    if (pause) {
+      const approvals = await collectApprovals(pause.pending);
+      await runAgentStream(fetch('/agent_resume', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({run_id:pause.run_id,approvals})}), ctx);
+    }
+  }
+  async function processAgentStream(res, ctx) {
+    const reader = res.body.getReader(); const decoder = new TextDecoder(); let buffer=''; let pause=null;
+    while (true) {
+      const { done, value } = await reader.read(); if (done) break;
+      buffer += decoder.decode(value, {stream:true});
+      const lines = buffer.split('\n'); buffer = lines.pop();
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        const data = line.slice(6); if (data === '[DONE]') continue;
+        let ev; try { ev = JSON.parse(data); } catch { continue; }
+        handleAgentEvent(ev, ctx);
+        if (ev.type === 'awaiting_confirmation') pause = { run_id:ev.run_id, pending:ev.pending };
+      }
+    }
+    return pause;
+  }
+  function shortParams(p) { const s = JSON.stringify(p||{}); return s.length>90 ? s.slice(0,90)+'…' : s; }
+  function handleAgentEvent(ev, ctx) {
+    switch (ev.type) {
+      case 'text': if (ev.text) { ctx.bubble = appendAssistant(ev.text, false); } break;
+      case 'tool_call': appendSystem('→ ' + ev.tool + ' ' + shortParams(ev.params)); ctx.bubble=null; break;
+      case 'tool_result': appendSystem((ev.success?'✓':'✗') + ' ' + ev.tool + (ev.success?'':' — ' + ((ev.result&&ev.result.error)||'failed'))); break;
+      case 'done': if (ev.text) { if (ctx.bubble) ctx.bubble.innerHTML = mdToHtml(ev.text); else appendAssistant(ev.text, false); } setPresence('at rest','present'); break;
+      case 'max_iterations': appendSystem('agent stopped — reached step limit'); setPresence('at rest','present'); break;
+      case 'awaiting_confirmation': appendSystem(ev.pending.length + ' action(s) need your approval'); break;
+      case 'status': appendSystem(ev.text); break;
+      case 'error': appendSystem('agent error: ' + (ev.error||'unknown')); setPresence('at rest','present'); break;
+    }
+  }
+  async function collectApprovals(pending) {
+    const approvals = [];
+    for (const call of pending) {
+      document.getElementById('confirm-detail').textContent = JSON.stringify(call, null, 2);
+      document.getElementById('confirm-panel').classList.add('visible');
+      const ok = await new Promise(r => { agentApprovalResolve = r; });
+      approvals.push(ok); appendSystem((ok?'approved':'denied') + ': ' + call.tool);
+    }
+    document.getElementById('confirm-panel').classList.remove('visible');
+    return approvals;
+  }
+  function confirmApprove() { if (agentApprovalResolve) { const r=agentApprovalResolve; agentApprovalResolve=null; r(true); } }
+  function confirmReject() { if (agentApprovalResolve) { const r=agentApprovalResolve; agentApprovalResolve=null; r(false); } }
 
-                    const blob = new Blob(audioChunks, { type: 'audio/webm' });
-                    audioChunks = [];   // clear immediately to prevent double processing
+  // ── voice ──
+  async function toggleMic() {
+    if (currentAudio) { currentAudio.pause(); currentAudio.src=''; currentAudio=null; }
+    if (isRecording) { mediaRecorder.stop(); return; }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio:true });
+      audioChunks = []; mediaRecorder = new MediaRecorder(stream);
+      mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
+      mediaRecorder.onstop = async () => {
+        stream.getTracks().forEach(t => t.stop());
+        document.getElementById('mic-btn').classList.remove('active'); isRecording = false;
+        if (audioChunks.length === 0) return;
+        const blob = new Blob(audioChunks, { type:'audio/webm' }); audioChunks = [];
+        const s = appendSystem('transcribing…');
+        try {
+          const res = await fetch('/transcribe', { method:'POST', headers:{'Content-Type':'audio/webm'}, body:blob });
+          const data = await res.json(); s.remove();
+          if (data.text) await sendVoiceMessage(data.text); else appendSystem('could not transcribe audio');
+        } catch (e) { appendSystem('transcription error: ' + e.message); }
+      };
+      mediaRecorder.start(); isRecording = true;
+      document.getElementById('mic-btn').classList.add('active'); appendSystem('recording… tap mic to stop');
+    } catch (e) { appendSystem('mic error: ' + e.message); }
+  }
+  function enrollVoice() { document.getElementById('enroll-modal').classList.add('visible'); document.getElementById('enroll-name').focus(); }
+  function closeEnrollModal() { document.getElementById('enroll-modal').classList.remove('visible'); }
+  async function startEnrollment() {
+    const name = document.getElementById('enroll-name').value.trim();
+    const trust = document.getElementById('enroll-trust').value;
+    if (!name) { document.getElementById('enroll-name').focus(); return; }
+    closeEnrollModal();
+    const b = document.getElementById('enroll-btn'); b.textContent = 'recording…'; b.disabled = true;
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio:true });
+      const rec = new MediaRecorder(stream); const chunks = [];
+      rec.ondataavailable = e => chunks.push(e.data);
+      rec.onstop = async () => {
+        stream.getTracks().forEach(t => t.stop());
+        const blob = new Blob(chunks, { type:'audio/webm' }); appendSystem('enrolling ' + name + '…');
+        try {
+          const res = await fetch('/speakers/enroll', { method:'POST', headers:{'X-Speaker-Name':name,'X-Trust-Level':trust}, body:blob });
+          const data = await res.json();
+          appendSystem(data.success ? ('voice enrolled: ' + data.name + ' (' + data.trust_level + ', ' + data.samples_used + ' samples)') : ('enrollment failed: ' + data.error));
+        } catch (e) { appendSystem('enrollment error: ' + e.message); }
+        b.textContent = 'enroll voice'; b.disabled = false;
+      };
+      rec.start(); appendSystem('recording 15s — speak naturally…'); setTimeout(() => rec.stop(), 15000);
+    } catch (e) { appendSystem('mic error: ' + e.message); b.textContent = 'enroll voice'; b.disabled = false; }
+  }
+  async function sendVoiceMessage(text) {
+    if (!text || sendBtn.disabled) return;
+    setDisabled(true); appendUser(text);
+    const contentEl = appendAssistant('', false); contentEl.textContent = '…';
+    try {
+      const res = await fetch('/voice_chat', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({content:text}) });
+      const data = await res.json();
+      if (data.error) { contentEl.textContent = 'Error: ' + data.error; return; }
+      if (data.handoff_audio) await playAudio(data.handoff_audio);
+      contentEl.innerHTML = mdToHtml(data.text || '');
+      if (data.audio) await playAudio(data.audio);
+    } catch (e) { contentEl.textContent = 'Error: ' + e.message; }
+    finally { setDisabled(false); inputEl.focus(); scrollBottom(); }
+  }
+  function playAudio(b64) {
+    return new Promise((resolve) => {
+      if (currentAudio) { currentAudio.pause(); currentAudio.src=''; currentAudio=null; }
+      if (!b64) return resolve();
+      const bin = atob(b64); const arr = new Uint8Array(bin.length);
+      for (let i=0;i<bin.length;i++) arr[i]=bin.charCodeAt(i);
+      const url = URL.createObjectURL(new Blob([arr], {type:'audio/wav'}));
+      currentAudio = new Audio(url); currentAudio.play().catch(()=>{});
+      currentAudio.onended = () => { URL.revokeObjectURL(url); currentAudio=null; resolve(); };
+    });
+  }
 
-                    appendSystem('transcribing...');
-                    try {
-                        const res = await fetch('/transcribe', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'audio/webm' },
-                            body: blob
-                        });
-                        const data = await res.json();
-                        console.log('transcribe result:', data);
-                        // Remove "transcribing" message
-                        const msgs = document.querySelectorAll('.system-msg');
-                        msgs[msgs.length - 1].parentElement.remove();
-                        if (data.text) {
-                            await sendVoiceMessage(data.text);
-                        } else {
-                            appendSystem('could not transcribe audio');
-                        }
-                    } catch (e) {
-                        appendSystem('transcription error: ' + e.message);
-                    }
-                };
-                mediaRecorder.start();
-                isRecording = true;
-                document.getElementById('mic-btn').classList.add('active');
-                appendSystem('recording... tap mic to stop');
-            } catch (e) {
-                appendSystem('mic error: ' + e.message);
-            }
-        }
+  // ── teach a doc ──
+  function teachDoc() { document.getElementById('learn-file').click(); }
+  async function uploadDoc(file) {
+    if (!file) return;
+    const domain = (prompt('What skill is this? (a category, e.g. robotics, finance)', 'general') || 'general').trim() || 'general';
+    appendSystem('teaching Kamil "' + file.name + '" (' + domain + ')…');
+    const fd = new FormData(); fd.append('file', file); fd.append('domain', domain);
+    try {
+      const res = await fetch('/learn', { method:'POST', body:fd }); const data = await res.json();
+      appendSystem(data.success ? ('learned "' + file.name + '" → ' + data.chunks + ' chunks in "' + data.domain + '". Kamil can use it now.') : ('couldn\'t learn "' + file.name + '": ' + (data.error||'unknown error')));
+    } catch (e) { appendSystem('teach failed: ' + e.message); }
+    document.getElementById('learn-file').value = '';
+  }
 
-        function enrollVoice() {
-            document.getElementById('enroll-modal').classList.add('visible');
-            document.getElementById('enroll-name').focus();
-        }
+  // ── projects / session ──
+  async function loadProjects() {
+    try { const res = await fetch('/projects'); const data = await res.json();
+      (data.projects||[]).forEach(p => { const o=document.createElement('option'); o.value=p; o.textContent=p; projectSelect.appendChild(o); });
+    } catch {}
+  }
+  async function loadProject() {
+    const name = projectSelect.value; if (!name) return;
+    loadBtn.disabled = true; projectStatus.textContent = 'indexing…'; projectStatus.className = 'loading';
+    try {
+      const res = await fetch('/select_project', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({project_name:name}) });
+      const data = await res.json();
+      projectStatus.textContent = data.chunks==='cached' ? (name+' · cached') : (name + ' · ' + (data.py_files||data.files||0) + ' files');
+      projectStatus.className = 'active';
+    } catch { projectStatus.textContent = 'error'; projectStatus.className = ''; }
+    loadBtn.disabled = false;
+  }
+  async function resetChat() { await fetch('/reset', {method:'POST'}); messagesEl.innerHTML=''; appendSystem('conversation cleared'); }
+  async function restoreSession() {
+    try {
+      const res = await fetch('/history'); const data = await res.json();
+      if (data.history && data.history.length) {
+        data.history.forEach(m => { if (m.role==='user') appendUser(m.content); else if (m.role==='assistant') appendAssistant(m.content, false); });
+      }
+      if (data.project) {
+        projectStatus.textContent = data.project + ' · restored'; projectStatus.className = 'active';
+        for (const o of projectSelect.options) if (o.value === data.project) { o.selected = true; break; }
+      }
+    } catch {}
+  }
+  async function pollPresence() {
+    try { const res = await fetch('/presence'); if (!res.ok) return; const data = await res.json();
+      (data.messages||[]).forEach(m => appendProactive(m.text));
+    } catch {}
+  }
 
-        function closeEnrollModal() {
-            document.getElementById('enroll-modal').classList.remove('visible');
-        }
+  // clock
+  function tick() { const d = new Date(); document.getElementById('clock').textContent = d.toLocaleDateString(undefined,{weekday:'short'}) + ', ' + d.toLocaleTimeString(undefined,{hour:'numeric',minute:'2-digit'}); }
+  tick(); setInterval(tick, 30000);
 
-        async function startEnrollment() {
-            const name = document.getElementById('enroll-name').value.trim();
-            const trust = document.getElementById('enroll-trust').value;
-            if (!name) {
-                document.getElementById('enroll-name').focus();
-                return;
-            }
-            closeEnrollModal();
+  loadProjects().then(restoreSession);
+  setInterval(pollPresence, 30000);
 
-            const enrollBtn = document.getElementById('enroll-btn');
-            enrollBtn.textContent = 'recording...';
-            enrollBtn.disabled = true;
-
-            try {
-                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-                const recorder = new MediaRecorder(stream);
-                const chunks = [];
-
-                recorder.ondataavailable = e => chunks.push(e.data);
-                recorder.onstop = async () => {
-                    stream.getTracks().forEach(t => t.stop());
-                    const blob = new Blob(chunks, { type: 'audio/webm' });
-                    appendSystem(`enrolling ${name}...`);
-                    try {
-                        const res = await fetch('/speakers/enroll', {
-                            method: 'POST',
-                            headers: {
-                                'X-Speaker-Name': name,
-                                'X-Trust-Level': trust
-                            },
-                            body: blob
-                        });
-                        const data = await res.json();
-                        if (data.success) {
-                            appendSystem(`voice enrolled: ${data.name} (${data.trust_level}, ${data.samples_used} samples)`);
-                        } else {
-                            appendSystem(`enrollment failed: ${data.error}`);
-                        }
-                    } catch (e) {
-                        appendSystem(`enrollment error: ${e.message}`);
-                    }
-                    enrollBtn.textContent = 'enroll voice';
-                    enrollBtn.disabled = false;
-                };
-
-                recorder.start();
-                appendSystem(`recording 15s — speak naturally...`);
-                setTimeout(() => recorder.stop(), 15000);
-            } catch (e) {
-                appendSystem(`mic error: ${e.message}`);
-                enrollBtn.textContent = 'enroll voice';
-                enrollBtn.disabled = false;
-            }
-        }
-
-        async function sendVoiceMessage(text) {
-            if (!text || sendBtn.disabled) return;
-            inputEl.value = '';
-            setDisabled(true);
-            appendUser(text);
-
-            const contentEl = appendAssistant('', false);
-            const cursor = document.createElement('span');
-            cursor.className = 'cursor';
-            contentEl.parentElement.appendChild(cursor);
-
-            try {
-                const res = await fetch('/voice_chat', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ content: text })
-                });
-                const data = await res.json();
-
-                if (data.error) {
-                    contentEl.textContent = 'Error: ' + data.error;
-                    return;
-                }
-
-                // Play handoff phrase immediately if present
-                if (data.handoff_audio) {
-                    await playAudio(data.handoff_audio);
-                }
-
-                // Show and play final response
-                contentEl.textContent = data.text;
-                if (data.audio) {
-                    await playAudio(data.audio);
-                }
-            } catch (e) {
-                contentEl.textContent = 'Error: ' + e.message;
-            } finally {
-                // safety: only remove cursor if it's still in the DOM
-                if (cursor && cursor.parentElement) cursor.remove();
-                setDisabled(false);
-                inputEl.focus();
-                scrollBottom();
-            }
-        }
-
-        function playAudio(b64) {
-            return new Promise((resolve) => {
-                if (currentAudio) {
-                    currentAudio.pause();
-                    currentAudio.src = '';
-                    currentAudio = null;
-                }
-                if (!b64) return resolve();
-                const audioData = atob(b64);
-                const audioArray = new Uint8Array(audioData.length);
-                for (let i = 0; i < audioData.length; i++) {
-                    audioArray[i] = audioData.charCodeAt(i);
-                }
-                const blob = new Blob([audioArray], { type: 'audio/wav' });
-                const url = URL.createObjectURL(blob);
-                currentAudio = new Audio(url);
-                currentAudio.play().catch(e => console.error('audio:', e));
-                currentAudio.onended = () => {
-                    URL.revokeObjectURL(url);
-                    currentAudio = null;
-                    resolve();
-                };
-            });
-        }
-
-        inputEl.addEventListener('input', () => {
-            inputEl.style.height = 'auto';
-            inputEl.style.height = Math.min(inputEl.scrollHeight, 180) + 'px';
-        });
-
-        inputEl.addEventListener('keydown', e => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
-                sendMessage();
-            }
-        });
-
-        function appendSystem(text) {
-            const row = document.createElement('div');
-            row.className = 'message-row system-row';
-            row.innerHTML = `<span class="system-msg">${text}</span>`;
-            messagesEl.appendChild(row);
-            scrollBottom();
-        }
-
-        function appendUser(text) {
-            const row = document.createElement('div');
-            row.className = 'message-row user';
-            row.innerHTML = `<div class="bubble user">${escapeHtml(text)}</div>`;
-            messagesEl.appendChild(row);
-            scrollBottom();
-        }
-
-        function appendAssistant(text, isCouncil) {
-            const row = document.createElement('div');
-            row.className = 'message-row assistant';
-            const bubble = document.createElement('div');
-            bubble.className = 'bubble assistant' + (isCouncil ? ' council-response' : '');
-
-            const label = document.createElement('span');
-            label.className = 'role-label ' + (isCouncil ? 'council' : 'kamil');
-            label.textContent = isCouncil ? 'COUNCIL' : 'KAMIL';
-            bubble.appendChild(label);
-
-            const content = document.createElement('span');
-            if (text) content.innerHTML = mdToHtml(text); else content.textContent = '';
-            bubble.appendChild(content);
-
-            row.appendChild(bubble);
-            messagesEl.appendChild(row);
-            scrollBottom();
-            return content;
-        }
-
-        // Teach Kamil a skill: upload a doc -> /learn -> immediately queryable.
-        function teachDoc() { document.getElementById('learn-file').click(); }
-        async function uploadDoc(file) {
-            if (!file) return;
-            const domain = (prompt("What skill is this? (a category, e.g. robotics, finance, legal)", "general") || "general").trim() || "general";
-            appendSystem(`teaching Kamil "${file.name}" (${domain})…`);
-            const fd = new FormData();
-            fd.append('file', file);
-            fd.append('domain', domain);
-            try {
-                const res = await fetch('/learn', { method: 'POST', body: fd });
-                const data = await res.json();
-                if (data.success) appendSystem(`learned "${file.name}" → ${data.chunks} chunks in "${data.domain}". Kamil can use it now.`);
-                else appendSystem(`couldn't learn "${file.name}": ${data.error || 'unknown error'}`);
-            } catch (e) {
-                appendSystem('teach failed: ' + e.message);
-            }
-            document.getElementById('learn-file').value = '';
-        }
-
-        // Kamil reaching out unprompted (from the presence heartbeat).
-        function appendProactive(text) {
-            appendSystem('kamil reached out');
-            appendAssistant(text, false);
-        }
-
-        // Hide tool/memory calls from the display — fenced (```tool / ```json) or bare JSON.
-        function hideTools(t) {
-            let cut = t.length;
-            for (const m of ['```tool', '```json', '{"tool"', '{ "tool"', "{'tool'"]) {
-                const i = t.indexOf(m);
-                if (i !== -1 && i < cut) cut = i;
-            }
-            return t.slice(0, cut).trimEnd();
-        }
-
-        function escapeHtml(text) {
-            return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-        }
-
-        // Lightweight offline markdown -> HTML (code blocks, inline code, bold, headers, lists).
-        function mdToHtml(src) {
-            const blocks = [];
-            src = String(src).replace(/```(\w*)\n?([\s\S]*?)```/g, (_, lang, code) => {
-                blocks.push('<pre class="md-code"><code>' + escapeHtml(code.replace(/\n$/, '')) + '</code></pre>');
-                return ' B' + (blocks.length - 1) + ' ';
-            });
-            let h = escapeHtml(src);
-            h = h.replace(/`([^`\n]+)`/g, '<code class="md-inline">$1</code>');
-            h = h.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
-            h = h.replace(/^#{1,6}\s+(.+)$/gm, '<strong>$1</strong>');
-            h = h.replace(/^\s*[-*]\s+(.+)$/gm, '&bull; $1');
-            h = h.replace(/\n/g, '<br>');
-            h = h.replace(/ B(\d+) /g, (_, i) => blocks[+i]);
-            return h;
-        }
-
-        function scrollBottom() {
-            messagesEl.scrollTop = messagesEl.scrollHeight;
-        }
-
-        async function sendMessage() {
-            const text = inputEl.value.trim();
-            if (!text || sendBtn.disabled) return;
-            inputEl.value = '';
-            inputEl.style.height = 'auto';
-            setDisabled(true);
-
-            appendUser(text);
-
-            const isCouncil = text.startsWith('/council');
-            const cleanText = isCouncil ? text.slice(8).trim() : text;
-
-            if (isCouncil) {
-                await sendCouncil(cleanText);
-                setDisabled(false);
-                inputEl.focus();
-                return;
-            }
-
-            const isAgent = text.startsWith('/agent');
-            if (isAgent) {
-                await sendAgent(text.slice(6).trim());
-                setDisabled(false);
-                inputEl.focus();
-                return;
-            }
-
-            const contentEl = appendAssistant('', false);
-            contentEl.textContent = 'thinking…';
-            const cursor = document.createElement('span');
-            cursor.className = 'cursor';
-            contentEl.parentElement.appendChild(cursor);
-
-            let fullText = '';
-            let firstChunk = true;
-
-            try {
-                // /chat streams token-by-token (perceived speed); /agent for tools.
-                const res = await fetch('/chat', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ content: text })
-                });
-
-                const reader = res.body.getReader();
-                const decoder = new TextDecoder();
-                let buffer = '';
-
-                while (true) {
-                    const { done, value } = await reader.read();
-                    if (done) break;
-                    buffer += decoder.decode(value, { stream: true });
-                    const lines = buffer.split('\n');
-                    buffer = lines.pop();
-                    for (const line of lines) {
-                        if (!line.startsWith('data: ')) continue;
-                        const data = line.slice(6);
-                        if (data === '[DONE]') continue;
-                        try {
-                            const parsed = JSON.parse(data);
-                            if (parsed.chunk) {
-                                if (firstChunk) { fullText = ''; firstChunk = false; }
-                                fullText += parsed.chunk;
-                                // hide any memory/tool block from the display
-                                contentEl.textContent = hideTools(fullText);
-                                contentEl.parentElement.appendChild(cursor);
-                                scrollBottom();
-                            }
-                            if (parsed.error) {
-                                contentEl.textContent = 'Error: ' + parsed.error;
-                            }
-                        } catch { }
-                    }
-                }
-            } catch (e) {
-                contentEl.textContent = 'Connection error: ' + e.message;
-            } finally {
-                if (cursor && cursor.parentElement) cursor.remove();
-                // reply was only a memory/tool op -> show a tick instead of a blank bubble
-                if (!firstChunk && !contentEl.textContent.trim()) {
-                    contentEl.textContent = '✓ noted';
-                } else if (fullText.trim()) {
-                    // stream done -> re-render the plain text as markdown (code blocks etc.)
-                    contentEl.innerHTML = mdToHtml(hideTools(fullText));
-                }
-                setDisabled(false);
-                inputEl.focus();
-            }
-        }
-
-        async function sendCouncil(text) {
-            appendSystem('council deliberating...');
-            try {
-                const res = await fetch('/council', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ content: text })
-                });
-                const data = await res.json();
-
-                const msgs = messagesEl.querySelectorAll('.system-msg');
-                msgs[msgs.length - 1].parentElement.remove();
-
-                if (data.error) { appendSystem('council error: ' + data.error); return; }
-
-                const block = document.createElement('div');
-                block.className = 'council-block';
-                block.innerHTML = `
-                              <div class="council-section-label analyst">ANALYST — QWEN</div>
-                              <div class="council-section-body analyst">${escapeHtml(data.analyst || '')}</div>
-                              <div class="council-section-label advocate">DEVIL'S ADVOCATE — DOLPHIN</div>
-                              <div class="council-section-body advocate">${escapeHtml(data.advocate || '')}</div>
-                              <div class="council-section-label synthesizer">SYNTHESIZER — LLAMA 3.1</div>
-                              <div class="council-section-body synthesizer">${escapeHtml(data.synthesizer || '')}</div>
-                            `;
-                messagesEl.appendChild(block);
-                setTimeout(() => messagesEl.scrollTop = messagesEl.scrollHeight, 50);
-            } catch (e) {
-                appendSystem('council error: ' + e.message);
-            }
-        }
-
-        // ── Agent mode: multi-step tool-use loop with confirmation resume ──
-
-        async function sendAgent(text) {
-            if (!text) { appendSystem('usage: /agent <task>'); return; }
-            appendSystem('agent working...');
-            const ctx = { bubble: null };
-            try {
-                await runAgentStream(fetch('/chat_agent', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ content: text })
-                }), ctx);
-            } catch (e) {
-                appendSystem('agent error: ' + e.message);
-            }
-        }
-
-        // Process a stream; if it pauses for approval, collect decisions and resume.
-        async function runAgentStream(fetchPromise, ctx) {
-            const res = await fetchPromise;
-            const pause = await processAgentStream(res, ctx);
-            if (pause) {
-                const approvals = await collectApprovals(pause.pending);
-                await runAgentStream(fetch('/agent_resume', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ run_id: pause.run_id, approvals })
-                }), ctx);
-            }
-        }
-
-        async function processAgentStream(res, ctx) {
-            const reader = res.body.getReader();
-            const decoder = new TextDecoder();
-            let buffer = '';
-            let pause = null;
-            while (true) {
-                const { done, value } = await reader.read();
-                if (done) break;
-                buffer += decoder.decode(value, { stream: true });
-                const lines = buffer.split('\n');
-                buffer = lines.pop();
-                for (const line of lines) {
-                    if (!line.startsWith('data: ')) continue;
-                    const data = line.slice(6);
-                    if (data === '[DONE]') continue;
-                    let ev;
-                    try { ev = JSON.parse(data); } catch { continue; }
-                    handleAgentEvent(ev, ctx);
-                    if (ev.type === 'awaiting_confirmation') {
-                        pause = { run_id: ev.run_id, pending: ev.pending };
-                    }
-                }
-            }
-            return pause;
-        }
-
-        function shortParams(params) {
-            const s = JSON.stringify(params || {});
-            return s.length > 90 ? s.slice(0, 90) + '…' : s;
-        }
-
-        function handleAgentEvent(ev, ctx) {
-            switch (ev.type) {
-                case 'text':
-                    if (ev.text) ctx.bubble = appendAssistant(ev.text, false);
-                    break;
-                case 'tool_call':
-                    appendSystem(`→ ${ev.tool} ${shortParams(ev.params)}`);
-                    ctx.bubble = null;
-                    break;
-                case 'tool_result':
-                    appendSystem(`${ev.success ? '✓' : '✗'} ${ev.tool}` +
-                        (ev.success ? '' : ' — ' + ((ev.result && ev.result.error) || 'failed')));
-                    break;
-                case 'done':
-                    if (ev.text) {
-                        if (ctx.bubble) ctx.bubble.textContent = ev.text;
-                        else ctx.bubble = appendAssistant(ev.text, false);
-                    }
-                    break;
-                case 'max_iterations':
-                    appendSystem('agent stopped — reached step limit');
-                    break;
-                case 'awaiting_confirmation':
-                    appendSystem(`${ev.pending.length} action(s) need your approval`);
-                    break;
-                case 'status':
-                    appendSystem(ev.text);
-                    break;
-                case 'error':
-                    appendSystem('agent error: ' + (ev.error || 'unknown'));
-                    break;
-            }
-        }
-
-        // Show each pending tool in the confirm panel, await approve/reject.
-        async function collectApprovals(pending) {
-            const approvals = [];
-            for (const call of pending) {
-                document.getElementById('confirm-detail').textContent = JSON.stringify(call, null, 2);
-                document.getElementById('confirm-panel').classList.add('visible');
-                const ok = await new Promise(resolve => { agentApprovalResolve = resolve; });
-                approvals.push(ok);
-                appendSystem(`${ok ? 'approved' : 'denied'}: ${call.tool}`);
-            }
-            document.getElementById('confirm-panel').classList.remove('visible');
-            return approvals;
-        }
-
-        // Confirm-panel buttons resolve the pending agent approval (see collectApprovals).
-        function confirmApprove() {
-            if (agentApprovalResolve) { const r = agentApprovalResolve; agentApprovalResolve = null; r(true); }
-        }
-        function confirmReject() {
-            if (agentApprovalResolve) { const r = agentApprovalResolve; agentApprovalResolve = null; r(false); }
-        }
-
-        async function loadProjects() {
-            const res = await fetch('/projects');
-            const data = await res.json();
-            data.projects.forEach(p => {
-                const opt = document.createElement('option');
-                opt.value = p;
-                opt.textContent = p;
-                projectSelect.appendChild(opt);
-            });
-        }
-
-        async function loadProject() {
-            const name = projectSelect.value;
-            if (!name) return;
-            loadBtn.disabled = true;
-            projectStatus.textContent = 'indexing...';
-            projectStatus.className = 'loading';
-            try {
-                const res = await fetch('/select_project', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ project_name: name })
-                });
-                const data = await res.json();
-                projectStatus.textContent = data.chunks === 'cached' ? `${name} · cached` : `${name} · ${data.chunks} chunks`;
-                projectStatus.className = 'active';
-            } catch {
-                projectStatus.textContent = 'error';
-                projectStatus.className = '';
-            }
-            loadBtn.disabled = false;
-        }
-
-        async function resetChat() {
-            await fetch('/reset', { method: 'POST' });
-            messagesEl.innerHTML = '';
-            appendSystem('kamil · local · offline · type /council for deliberation');
-        }
-
-        async function restoreSession() {
-            const res = await fetch('/history');
-            const data = await res.json();
-            if (data.history && data.history.length > 0) {
-                data.history.forEach(msg => {
-                    if (msg.role === 'user') appendUser(msg.content);
-                    else if (msg.role === 'assistant') appendAssistant(msg.content, false);
-                });
-                appendSystem(`session restored · ${data.history.length} messages`);
-            }
-            if (data.project) {
-                projectStatus.textContent = `${data.project} · restored`;
-                projectStatus.className = 'active';
-                const opts = projectSelect.options;
-                for (let i = 0; i < opts.length; i++) {
-                    if (opts[i].value === data.project) {
-                        projectSelect.selectedIndex = i;
-                        break;
-                    }
-                }
-            }
-        }
-
-        // Poll for proactive messages from Kamil's heartbeat.
-        async function pollPresence() {
-            try {
-                const res = await fetch('/presence');
-                if (!res.ok) return;
-                const data = await res.json();
-                (data.messages || []).forEach(m => appendProactive(m.text));
-            } catch { }
-        }
-
-        loadProjects().then(restoreSession);
-        setInterval(pollPresence, 30000);
-    </script>
+  // ── presence core (canvas) ──
+  (function(){
+    const cv=document.getElementById('core'), ctx=cv.getContext('2d');
+    const DPR=Math.min(devicePixelRatio||1,2); cv.width=208*DPR; cv.height=208*DPR; ctx.scale(DPR,DPR);
+    const W=208,H=208,cx=W/2,cy=H/2, reduce=matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const motes=Array.from({length:24},()=>({a:Math.random()*6.28,r:48+Math.random()*42,sp:(.0016+Math.random()*.004)*(Math.random()<.5?-1:1),sz:.6+Math.random()*1.7,ph:Math.random()*6.28}));
+    function ring(r,al,w){ctx.beginPath();ctx.arc(cx,cy,r,0,6.2832);ctx.strokeStyle='rgba(232,178,76,'+al+')';ctx.lineWidth=w;ctx.stroke();}
+    function frame(t){
+      ctx.clearRect(0,0,W,H);
+      const busy = sendBtn.disabled ? 1 : 0;
+      const b=reduce?0.7:(0.5+0.5*Math.sin(t*(0.0011+busy*0.0009)));
+      const g=ctx.createRadialGradient(cx,cy,4,cx,cy,56+b*20);
+      g.addColorStop(0,'rgba(232,178,76,'+(0.32+b*0.15)+')');g.addColorStop(.5,'rgba(232,178,76,.07)');g.addColorStop(1,'rgba(232,178,76,0)');
+      ctx.fillStyle=g;ctx.fillRect(0,0,W,H);
+      ctx.beginPath();ctx.arc(cx,cy,14+b*4,0,6.2832);
+      const cg=ctx.createRadialGradient(cx-4,cy-4,1,cx,cy,19);cg.addColorStop(0,'#FBE6B0');cg.addColorStop(1,'#D69836');ctx.fillStyle=cg;ctx.fill();
+      ring(42+b*3,0.5,1.4); ring(64,0.15,1); ring(88,0.07,1);
+      ctx.beginPath();ctx.arc(cx,cy,64,t*(0.0012+busy*0.0016),t*(0.0012+busy*0.0016)+2.1);ctx.strokeStyle='rgba(90,168,150,'+(0.4+busy*0.3)+')';ctx.lineWidth=2;ctx.stroke();
+      for(const m of motes){ if(!reduce)m.a+=m.sp*(1.7+busy*2.4);
+        const x=cx+Math.cos(m.a)*m.r,y=cy+Math.sin(m.a)*m.r,tw=0.4+0.6*Math.abs(Math.sin(t*0.002+m.ph));
+        ctx.beginPath();ctx.arc(x,y,m.sz,0,6.2832);ctx.fillStyle='rgba(240,206,140,'+(0.2+tw*0.5)+')';ctx.fill();}
+      requestAnimationFrame(frame);
+    }
+    requestAnimationFrame(frame);
+  })();
+</script>
 </body>
 </html>
