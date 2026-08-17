@@ -600,6 +600,24 @@ async def synthesize(message: Message):
         traceback.print_exc()
         return {"error": str(e)}
 
+import time as _time
+_voice_up_cache = {"ok": None, "ts": 0.0}
+
+def _voice_model_up() -> bool:
+    """Is the separate fast voice model (8084) actually running? Cached ~15s so
+    we don't probe every request. When it's down, /voice_chat skips the two-stage
+    quick-pass entirely and answers straight from the primary model — no bogus
+    'let me check that for you' filler, no wasted failed connection."""
+    now = _time.time()
+    if _voice_up_cache["ok"] is not None and now - _voice_up_cache["ts"] < 15:
+        return _voice_up_cache["ok"]
+    try:
+        ok = httpx.get("http://127.0.0.1:8084/health", timeout=0.5).status_code == 200
+    except Exception:
+        ok = False
+    _voice_up_cache.update(ok=ok, ts=now)
+    return ok
+
 async def quick_voice_response(messages: list[dict]) -> str:
     try:
         async with httpx.AsyncClient(timeout=25) as client:
@@ -726,6 +744,23 @@ You have persistent memory. When memory is injected, it is real — from actual 
         ]
         is_followup = any(kw in message.content.lower() for kw in followup_keywords)
 
+        # No separate voice model running -> don't do the quick-pass/handoff dance
+        # (it would just emit a spurious "let me check that for you" and stall).
+        # Answer straight from the primary conversational model.
+        if not _voice_model_up():
+            full_messages = kamil._build_messages(message.content)
+            full_messages[0]["content"] += "\n\nVoice response: max 4 sentences, no markdown, no lists, natural spoken language."
+            full_messages[-1]["content"] = "/no_think " + full_messages[-1]["content"]
+            full_response = kamil.client.chat(full_messages, max_tokens=200, temperature=0.7)
+            if not full_response or not full_response.strip():
+                full_response = "I'm having trouble forming a response on that right now. Try asking again."
+            print(f"Primary response (no voice model): {full_response[:100]}")
+            kamil.history.append({"role": "user", "content": message.content})
+            kamil.history.append({"role": "assistant", "content": full_response})
+            save_history(kamil.history)
+            final_audio = synthesize_to_wav(full_response)
+            return {"text": full_response, "audio": base64.b64encode(final_audio).decode(), "format": "wav"}
+
         # Get quick response from voice model
         quick_response = await quick_voice_response(quick_messages)
         if not quick_response:
@@ -815,6 +850,36 @@ You have persistent memory. When memory is injected, it is real — from actual 
         traceback.print_exc()
         return {"error": str(e), "text": str(e), "audio": None}
 
+# Phrases Whisper commonly hallucinates from silence / non-speech audio.
+WHISPER_GHOSTS = {
+    "music", "thank you", "thanks", "thank you.", "thanks for watching",
+    "thank you for watching", "please subscribe", "you", "bye", "so", "okay",
+    "uh", "um", "hmm", ".", "[music]", "[blank_audio]", "subtitles by the amara.org community",
+}
+
+def _looks_like_silence(text: str, result: dict, audio) -> bool:
+    """True when the transcript is almost certainly a Whisper hallucination on
+    silence — so we don't fire a voice reply at nothing."""
+    t = (text or "").lower().strip(" .!?,\"'")
+    if not t:
+        return True
+    energy = 0.0
+    try:
+        import numpy as np
+        if audio is not None and len(audio):
+            energy = float(np.sqrt(np.mean(np.square(audio))))
+    except Exception:
+        pass
+    segs = result.get("segments") or []
+    nsp = (sum(s.get("no_speech_prob", 0.0) for s in segs) / len(segs)) if segs else 1.0
+    if energy and energy < 0.003:          # essentially silent input
+        return True
+    if t in WHISPER_GHOSTS and nsp > 0.5:  # a known ghost + Whisper's own doubt
+        return True
+    if nsp > 0.9:                           # Whisper itself says "no speech"
+        return True
+    return False
+
 @app.post("/transcribe")
 async def transcribe(request: Request):
     try:
@@ -829,28 +894,42 @@ async def transcribe(request: Request):
         text = result["text"].strip()
         print(f"Transcribe result: '{text}'")
 
-        # Identify speaker from same audio (before file deletion)
-        speaker_result = None
+        # Load the clip once (for the silence guard + speaker id)
+        audio = None
         try:
             import librosa
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
-                audio, sr = librosa.load(tmp_path, sr=16000, mono=True)
-            with activity.task("verifying speaker"):
-                speaker_result = identify_speaker(audio, sample_rate=16000)
-            set_current_speaker(speaker_result)
-            print(f"[transcribe] Speaker: {speaker_result.speaker_name} "
-                  f"({speaker_result.trust_level}, conf={speaker_result.confidence:.2f})")
-            # Sealed succession directive — the only place it can activate.
-            # Both factors (the heir's verified voice + the spoken word) come
-            # from this single audio clip, so they cannot be assembled apart.
-            try:
-                from core.succession import scan_spoken
-                scan_spoken(text, speaker_result)
-            except Exception as _se:
-                print(f"[transcribe] succession scan skipped: {_se}")
+                audio, _sr = librosa.load(tmp_path, sr=16000, mono=True)
         except Exception as e:
-            print(f"[transcribe] Speaker ID failed: {e}")
+            print(f"[transcribe] audio load failed: {e}")
+
+        # Drop Whisper hallucinations on silence (e.g. an accidental empty tap
+        # that comes back as "Music") so Kamil doesn't answer to nothing.
+        if _looks_like_silence(text, result, audio):
+            print(f"[transcribe] dropped as silence/hallucination: '{text}'")
+            text = ""
+
+        # Identify speaker from the same audio
+        speaker_result = None
+        if audio is not None:
+            try:
+                with activity.task("verifying speaker"):
+                    speaker_result = identify_speaker(audio, sample_rate=16000)
+                set_current_speaker(speaker_result)
+                print(f"[transcribe] Speaker: {speaker_result.speaker_name} "
+                      f"({speaker_result.trust_level}, conf={speaker_result.confidence:.2f})")
+                # Sealed succession directive — the only place it can activate.
+                # Both factors (the heir's verified voice + the spoken word) come
+                # from this single audio clip, so they cannot be assembled apart.
+                if text:
+                    try:
+                        from core.succession import scan_spoken
+                        scan_spoken(text, speaker_result)
+                    except Exception as _se:
+                        print(f"[transcribe] succession scan skipped: {_se}")
+            except Exception as e:
+                print(f"[transcribe] Speaker ID failed: {e}")
 
         os.unlink(tmp_path)
 
