@@ -683,6 +683,28 @@
         .council-section-body::-webkit-scrollbar-track {
             background: transparent;
         }
+        .md-code {
+            background: #0b0b0b;
+            border: 1px solid #222;
+            border-radius: 8px;
+            padding: 12px 14px;
+            margin: 8px 0;
+            overflow-x: auto;
+            font-family: 'Cascadia Code', 'Consolas', 'SF Mono', monospace;
+            font-size: 12.5px;
+            line-height: 1.5;
+            color: #d6d6d6;
+            white-space: pre;
+        }
+        .md-code code { background: none; padding: 0; color: inherit; }
+        .md-inline {
+            background: #1a1a1a;
+            border-radius: 4px;
+            padding: 1px 5px;
+            font-family: 'Cascadia Code', 'Consolas', monospace;
+            font-size: 0.9em;
+            color: #e0b0ff;
+        }
     </style>
 </head>
 <body>
@@ -1020,7 +1042,7 @@
             bubble.appendChild(label);
 
             const content = document.createElement('span');
-            content.textContent = text || '';
+            if (text) content.innerHTML = mdToHtml(text); else content.textContent = '';
             bubble.appendChild(content);
 
             row.appendChild(bubble);
@@ -1067,6 +1089,23 @@
 
         function escapeHtml(text) {
             return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        }
+
+        // Lightweight offline markdown -> HTML (code blocks, inline code, bold, headers, lists).
+        function mdToHtml(src) {
+            const blocks = [];
+            src = String(src).replace(/```(\w*)\n?([\s\S]*?)```/g, (_, lang, code) => {
+                blocks.push('<pre class="md-code"><code>' + escapeHtml(code.replace(/\n$/, '')) + '</code></pre>');
+                return ' B' + (blocks.length - 1) + ' ';
+            });
+            let h = escapeHtml(src);
+            h = h.replace(/`([^`\n]+)`/g, '<code class="md-inline">$1</code>');
+            h = h.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+            h = h.replace(/^#{1,6}\s+(.+)$/gm, '<strong>$1</strong>');
+            h = h.replace(/^\s*[-*]\s+(.+)$/gm, '&bull; $1');
+            h = h.replace(/\n/g, '<br>');
+            h = h.replace(/ B(\d+) /g, (_, i) => blocks[+i]);
+            return h;
         }
 
         function scrollBottom() {
@@ -1152,7 +1191,12 @@
             } finally {
                 if (cursor && cursor.parentElement) cursor.remove();
                 // reply was only a memory/tool op -> show a tick instead of a blank bubble
-                if (!firstChunk && !contentEl.textContent.trim()) contentEl.textContent = '✓ noted';
+                if (!firstChunk && !contentEl.textContent.trim()) {
+                    contentEl.textContent = '✓ noted';
+                } else if (fullText.trim()) {
+                    // stream done -> re-render the plain text as markdown (code blocks etc.)
+                    contentEl.innerHTML = mdToHtml(hideTools(fullText));
+                }
                 setDisabled(false);
                 inputEl.focus();
             }
