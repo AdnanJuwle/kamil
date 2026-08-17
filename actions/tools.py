@@ -326,6 +326,24 @@ def _forget(params: dict) -> ToolResult:
     return ToolResult(success=True, output=r, tool="forget", params=params)
 
 
+def _web_search(params: dict) -> ToolResult:
+    from actions.web import search_web
+    res = search_web(params.get("query", ""), params.get("n", 5))
+    if not res:
+        return ToolResult(success=False, error="no results (or search unavailable)",
+                          tool="web_search", params=params)
+    return ToolResult(success=True, output={"results": res}, tool="web_search", params=params)
+
+
+def _web_fetch(params: dict) -> ToolResult:
+    from actions.web import fetch_url
+    r = fetch_url(params.get("url", ""), params.get("max_chars", 6000))
+    if not r.get("success"):
+        return ToolResult(success=False, error=r.get("error", "fetch failed"),
+                          tool="web_fetch", params=params)
+    return ToolResult(success=True, output=r, tool="web_fetch", params=params)
+
+
 def _learn(params: dict) -> ToolResult:
     """Ingest a document into Kamil's skill library so it can be retrieved later."""
     path = params.get("path", "")
@@ -416,6 +434,26 @@ TOOLS: dict[str, Tool] = {
         ],
         permission=Permission.AUTO,
         execute=_search_files
+    ),
+    "web_search": Tool(
+        name="web_search",
+        description="Search the web for current information (news, docs, anything past your 2023 cutoff). Returns titles, urls, snippets.",
+        params=[
+            ToolParam("query", "string", required=True, description="Search query"),
+            ToolParam("n", "int", required=False, description="Number of results (default 5)"),
+        ],
+        permission=Permission.AUTO,
+        execute=_web_search
+    ),
+    "web_fetch": Tool(
+        name="web_fetch",
+        description="Fetch a web page and return its readable text — use after web_search to read a result.",
+        params=[
+            ToolParam("url", "string", required=True, description="The URL to read"),
+            ToolParam("max_chars", "int", required=False, description="Max chars to return (default 6000)"),
+        ],
+        permission=Permission.AUTO,
+        execute=_web_fetch
     ),
     "create_task": Tool(
         name="create_task",

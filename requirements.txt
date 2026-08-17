@@ -16,6 +16,8 @@ pydantic==2.13.3
 python-multipart==0.0.32      # FastAPI file uploads (POST /learn)
 httpx==0.28.1                  # client to the llama.cpp model servers
 
+ddgs>=9.0.0                    # DuckDuckGo web search (no key, privacy-respecting)
+
 # ── Retrieval / vector store ───────────────────────────────────────
 chromadb==1.5.8
 sentence-transformers==5.4.1   # all-MiniLM-L6-v2 embeddings
