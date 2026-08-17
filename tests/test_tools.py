@@ -178,3 +178,27 @@ def test_parse_missing_params_defaults_empty():
 
 def test_parse_ignores_non_tool_json():
     assert tools.parse_tool_calls('{"foo": "bar"}') == []
+
+
+# ── robust parsing: write_file content that used to break the parser ──
+
+def test_parse_write_file_content_with_nested_fence_and_braces():
+    # content contains a ```python fence and { } braces — string-aware boundary scan
+    resp = '```tool\n{"tool": "write_file", "params": {"path": "a.py", "content": "```python\\nprint({1: 2})\\n```"}}\n```'
+    calls = tools.parse_tool_calls(resp)
+    assert calls and calls[0]["tool"] == "write_file"
+    assert "{1: 2}" in calls[0]["params"]["content"]
+
+
+def test_parse_write_file_content_with_real_newlines():
+    # literal newlines inside the JSON string are invalid JSON — must be repaired
+    resp = '```tool\n{"tool": "write_file", "params": {"path": "b.py", "content": "import os\ndef m():\n    return 1\n"}}\n```'
+    calls = tools.parse_tool_calls(resp)
+    assert calls and calls[0]["tool"] == "write_file"
+    assert "def m()" in calls[0]["params"]["content"]
+
+
+def test_parse_dedups_repeated_call():
+    resp = ('```tool\n{"tool": "read_file", "params": {"path": "x"}}\n```'
+            ' ```tool\n{"tool": "read_file", "params": {"path": "x"}}\n```')
+    assert len(tools.parse_tool_calls(resp)) == 1

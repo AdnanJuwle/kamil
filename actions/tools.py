@@ -739,53 +739,115 @@ def requires_confirmation_call(tool_name: str, params: dict) -> bool:
     return True  # any other approval-gated tool still confirms
 
 
+def _extract_json_objects(text: str) -> list[str]:
+    """Yield every top-level {...} substring, correctly skipping braces, backticks,
+    and quotes that appear INSIDE JSON string literals — so a write_file whose
+    content contains code, braces, or ``` fences doesn't fool the boundary scan."""
+    out: list[str] = []
+    i, n = 0, len(text)
+    while i < n:
+        if text[i] != '{':
+            i += 1
+            continue
+        depth = 0
+        in_str = False
+        esc = False
+        j = i
+        closed = False
+        while j < n:
+            c = text[j]
+            if in_str:
+                if esc:
+                    esc = False
+                elif c == '\\':
+                    esc = True
+                elif c == '"':
+                    in_str = False
+            elif c == '"':
+                in_str = True
+            elif c == '{':
+                depth += 1
+            elif c == '}':
+                depth -= 1
+                if depth == 0:
+                    out.append(text[i:j + 1])
+                    i = j + 1
+                    closed = True
+                    break
+            j += 1
+        if not closed:
+            break   # unbalanced (truncated) — stop
+    return out
+
+
+def _repair_json(raw: str) -> str:
+    """Escape literal newlines/tabs that sit INSIDE string literals — the most
+    common way a model breaks otherwise-valid tool-call JSON (multi-line file
+    content with real line breaks instead of \\n)."""
+    out = []
+    in_str = False
+    esc = False
+    for c in raw:
+        if in_str:
+            if esc:
+                out.append(c); esc = False
+            elif c == '\\':
+                out.append(c); esc = True
+            elif c == '"':
+                out.append(c); in_str = False
+            elif c == '\n':
+                out.append('\\n')
+            elif c == '\r':
+                out.append('\\r')
+            elif c == '\t':
+                out.append('\\t')
+            else:
+                out.append(c)
+        else:
+            out.append(c)
+            if c == '"':
+                in_str = True
+    return ''.join(out)
+
+
+def _loads_lenient(raw: str):
+    """json.loads with a couple of forgiving fallbacks (control chars in strings,
+    trailing commas)."""
+    import re
+    for candidate in (raw, _repair_json(raw)):
+        try:
+            return json.loads(candidate)
+        except (json.JSONDecodeError, ValueError):
+            pass
+    try:
+        return json.loads(re.sub(r',\s*([}\]])', r'\1', _repair_json(raw)))
+    except (json.JSONDecodeError, ValueError):
+        return None
+
+
 def parse_tool_calls(response: str) -> list[dict]:
     """
-    Parse tool calls from a model response. Tolerant of how the model fences them:
-    accepts ```tool / ```json / plain ``` blocks, and bare JSON objects that
-    carry a "tool" key. Each accepted call is normalised to {"tool", "params"}.
+    Parse tool calls from a model response, robust to how the model formats them:
+    fenced (```tool / ```json / ```), bare JSON, and — crucially — write_file/edit_file
+    calls whose content contains code, braces, or literal newlines. Boundary
+    detection is string-aware and JSON parsing is lenient. Each call is normalised
+    to {"tool", "params"}.
     """
-    import re
     calls: list[dict] = []
     seen: set[str] = set()
-
-    def _accept(raw: str):
-        raw = raw.strip()
-        if not raw:
-            return
-        try:
-            call = json.loads(raw)
-        except json.JSONDecodeError:
-            return
+    for raw in _extract_json_objects(response):
+        if '"tool"' not in raw and "'tool'" not in raw:
+            continue
+        call = _loads_lenient(raw)
         if not isinstance(call, dict) or "tool" not in call:
-            return
+            continue
         call.setdefault("params", {})
         if not isinstance(call["params"], dict):
-            return
-        key = json.dumps(call, sort_keys=True)
+            continue
+        norm = {"tool": call["tool"], "params": call["params"]}
+        key = json.dumps(norm, sort_keys=True)
         if key in seen:
-            return
+            continue
         seen.add(key)
-        calls.append({"tool": call["tool"], "params": call["params"]})
-
-    # 1) fenced code blocks: ```tool / ```json / ```
-    for block in re.findall(r'```(?:tool|json)?\s*\n(.*?)```', response, re.DOTALL):
-        _accept(block)
-
-    # 2) bare top-level JSON objects that mention a tool (balanced-brace scan)
-    if not calls:
-        for m in re.finditer(r'\{', response):
-            start = m.start()
-            depth = 0
-            for i in range(start, len(response)):
-                c = response[i]
-                if c == '{':
-                    depth += 1
-                elif c == '}':
-                    depth -= 1
-                    if depth == 0:
-                        candidate = response[start:i + 1]
-                        if '"tool"' in candidate:
-                            _accept(candidate)
-                        break
+        calls.append(norm)
     return calls
