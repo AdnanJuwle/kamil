@@ -163,9 +163,13 @@ class Orchestrator:
         if not (self.context_enabled and self.indexer and self.indexer.current_project):
             return ""
         proj = self.indexer.current_project
+        proj_dir = f"C:\\Users\\adnan\\Documents\\repos\\{proj}"
         header = (f"## PROJECT\nCurrent project: {proj}\n"
-                  f"Project directory: C:\\Users\\adnan\\Documents\\repos\\{proj}\n"
-                  "Create or edit files inside this directory unless told otherwise.")
+                  f"Project directory: {proj_dir}\n"
+                  f"Write EVERY file with a full path inside {proj_dir}. If the user asks for 'its own "
+                  f"folder', make a SUBFOLDER inside the project (e.g. {proj_dir}\\medical_gui\\main.py) "
+                  f"and create it with `mkdir` first. NEVER write to the Desktop, home directory, or any "
+                  f"path outside {proj_dir} — those need approval and usually don't exist.")
         try:
             from context.symbol_indexer import get_symbol_index
             root = self.indexer._get_project_root(proj)
@@ -552,6 +556,14 @@ class Orchestrator:
         from actions.agent import iter_agent
 
         self._maybe_compress()
+        # Load the project the user named. The coding path uses a clean prompt (not
+        # _build_messages, where auto-switch normally lives), so without this the
+        # coder gets NO project directory and guesses a random folder (Desktop).
+        if self.indexer:
+            mentioned = self.resolve_project(user_message)
+            if mentioned and mentioned != self.indexer.current_project:
+                print(f"[orchestrator] Project named: {mentioned} — auto-switching (agent)")
+                self.open_project(mentioned)
         tool_instr = self._agent_tool_instructions()
         voice_note = ("\n\n## SPOKEN ANSWER\nThis is a voice call. Do the work with tools, then "
                       "give your FINAL answer in at most 2-3 short spoken sentences — no markdown, "
