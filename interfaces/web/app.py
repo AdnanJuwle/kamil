@@ -764,8 +764,17 @@ def _build_voice_messages(content: str) -> list[dict]:
     voice_system = voice_system.replace(
         '- For complex technical questions needing code or file context: say "let me check that for you"',
         '- Answer everything directly and concisely in a spoken tone — never defer or say you will "check"')
+    voice_system = voice_system.replace(
+        '- Maximum 3 sentences for simple questions',
+        '- Maximum 2-3 short sentences for EVERY reply — even big/complex questions')
+    voice_system += ("\n\nSTRICT SPOKEN LIMIT: Your reply is read aloud. Use at most 2-3 short "
+                     "sentences and ALWAYS finish your thought within them — never write paragraphs, "
+                     "lists, or trail off. If a topic is large, give the essence in a sentence or two "
+                     "and offer to go deeper if asked.")
+    # No /no_think prefix: that's a Qwen/Gemma reasoning token; the Llama chat model
+    # echoes it as literal text ("No_think, ...").
     return [{"role": "system", "content": voice_system},
-            {"role": "user", "content": f"/no_think {content}"}]
+            {"role": "user", "content": content}]
 
 @app.post("/voice_chat_stream")
 async def voice_chat_stream(message: Message):
