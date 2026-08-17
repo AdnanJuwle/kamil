@@ -190,7 +190,9 @@ Available tools:
 - edit_file(path: string, old: string, new: string): Replace an exact, unique snippet — preferred for changing existing files
 - list_directory(path: string): List files in a directory
 - shell(command: string, cwd?: string, timeout?: int): Run a shell command
-- search_files(directory: string, pattern: string): Find files by pattern
+- search_files(directory: string, pattern: string): Find files by name pattern
+- grep(pattern: string, directory?: string, glob?: string): Search file CONTENTS by regex — find where code/text lives (file:line)
+- read_lines(path: string, start?: int, end?: int): Read a line range of a big file
 - web_search(query: string, n?: int): Search the web for CURRENT info (past your 2023 cutoff) — returns titles/urls/snippets
 - web_fetch(url: string): Read a web page's text (use after web_search)
 - create_task(title: string, description?: string, project?: string): Create a task

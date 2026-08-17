@@ -80,6 +80,39 @@ def test_create_task_calls_backend(monkeypatch):
     assert captured["project"] == "kamil"
 
 
+# ── grep / read_lines ─────────────────────────────────────────────
+
+def test_grep_finds_content(tmp_path):
+    (tmp_path / "a.py").write_text("import os\ndef foo():\n    return SECRET_XYZ\n")
+    (tmp_path / "b.txt").write_text("nothing here\n")
+    res = tools.execute_tool("grep", {"pattern": "SECRET_XYZ", "directory": str(tmp_path)})
+    assert res.success is True
+    m = res.output["matches"]
+    assert len(m) == 1 and m[0]["line"] == 3 and "a.py" in m[0]["file"]
+
+
+def test_grep_glob_filter(tmp_path):
+    (tmp_path / "a.py").write_text("target\n")
+    (tmp_path / "a.md").write_text("target\n")
+    res = tools.execute_tool("grep", {"pattern": "target", "directory": str(tmp_path), "glob": "*.py"})
+    assert len(res.output["matches"]) == 1 and res.output["matches"][0]["file"].endswith(".py")
+
+
+def test_grep_bad_regex(tmp_path):
+    res = tools.execute_tool("grep", {"pattern": "([", "directory": str(tmp_path)})
+    assert res.success is False and "regex" in res.error
+
+
+def test_read_lines_range(tmp_path):
+    f = tmp_path / "big.py"
+    f.write_text("".join(f"line{i}\n" for i in range(1, 51)))
+    res = tools.execute_tool("read_lines", {"path": str(f), "start": 10, "end": 12})
+    assert res.success is True
+    assert "line10" in res.output["content"] and "line12" in res.output["content"]
+    assert "line13" not in res.output["content"]
+    assert res.output["total_lines"] == 50
+
+
 # ── remind tool ───────────────────────────────────────────────────
 
 def test_remind_in_minutes(monkeypatch, tmp_path):

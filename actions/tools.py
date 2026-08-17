@@ -326,6 +326,57 @@ def _forget(params: dict) -> ToolResult:
     return ToolResult(success=True, output=r, tool="forget", params=params)
 
 
+def _grep(params: dict) -> ToolResult:
+    """Search file CONTENTS (regex) across a directory — find code by what it contains."""
+    import re as _re
+    import fnmatch
+    pattern = params.get("pattern", "")
+    directory = params.get("directory", ".")
+    glob_pat = params.get("glob", "*")
+    max_results = int(params.get("max_results", 60))
+    try:
+        rx = _re.compile(pattern)
+    except _re.error as e:
+        return ToolResult(success=False, error=f"bad regex: {e}", tool="grep", params=params)
+    _SKIP = {".git", "node_modules", "__pycache__", "venv", "venv313", ".venv", "chroma"}
+    matches = []
+    for root, dirs, files in os.walk(directory):
+        dirs[:] = [d for d in dirs if d not in _SKIP]
+        for fn in files:
+            if not fnmatch.fnmatch(fn, glob_pat):
+                continue
+            path = os.path.join(root, fn)
+            try:
+                with open(path, "r", encoding="utf-8", errors="ignore") as f:
+                    for i, line in enumerate(f, 1):
+                        if rx.search(line):
+                            matches.append({"file": path, "line": i, "text": line.strip()[:200]})
+                            if len(matches) >= max_results:
+                                return ToolResult(success=True, tool="grep", params=params,
+                                                  output={"matches": matches, "truncated": True})
+            except (OSError, UnicodeError):
+                continue
+    return ToolResult(success=True, output={"matches": matches, "count": len(matches)},
+                      tool="grep", params=params)
+
+
+def _read_lines(params: dict) -> ToolResult:
+    """Read a specific line range of a file (for big files you can't read whole)."""
+    path = params["path"]
+    start = max(1, int(params.get("start", 1)))
+    end = int(params.get("end", start + 200))
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
+            lines = f.readlines()
+    except Exception as e:
+        return ToolResult(success=False, error=str(e), tool="read_lines", params=params)
+    chunk = lines[start - 1:end]
+    numbered = "".join(f"{start + i}\t{ln}" for i, ln in enumerate(chunk))
+    return ToolResult(success=True, tool="read_lines", params=params,
+                      output={"path": path, "start": start, "end": min(end, len(lines)),
+                              "total_lines": len(lines), "content": numbered})
+
+
 def _web_search(params: dict) -> ToolResult:
     from actions.web import search_web
     res = search_web(params.get("query", ""), params.get("n", 5))
@@ -434,6 +485,29 @@ TOOLS: dict[str, Tool] = {
         ],
         permission=Permission.AUTO,
         execute=_search_files
+    ),
+    "grep": Tool(
+        name="grep",
+        description="Search file CONTENTS by regex across a directory (find where code/text lives). Returns file:line matches.",
+        params=[
+            ToolParam("pattern", "string", required=True, description="Regex to search for"),
+            ToolParam("directory", "string", required=False, description="Directory to search (default '.')"),
+            ToolParam("glob", "string", required=False, description="Filename filter, e.g. *.py (default *)"),
+            ToolParam("max_results", "int", required=False, description="Cap results (default 60)"),
+        ],
+        permission=Permission.AUTO,
+        execute=_grep
+    ),
+    "read_lines": Tool(
+        name="read_lines",
+        description="Read a specific line range of a file (for big files) — returns numbered lines.",
+        params=[
+            ToolParam("path", "string", required=True, description="Absolute file path"),
+            ToolParam("start", "int", required=False, description="First line (1-indexed, default 1)"),
+            ToolParam("end", "int", required=False, description="Last line (default start+200)"),
+        ],
+        permission=Permission.AUTO,
+        execute=_read_lines
     ),
     "web_search": Tool(
         name="web_search",
