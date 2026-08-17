@@ -284,7 +284,7 @@ async def status():
     return {
         "tiers": [
             {"id": "chat", "label": "chat", "model": CHAT_LABEL, "state": chat_state},
-            {"id": "heavy", "label": "heavy", "model": HEAVY_LABEL, "state": heavy_tier.state()},
+            {"id": "heavy", "label": "heavy", "model": heavy_tier.label(), "state": heavy_tier.state()},
         ],
         "block": schedule.current_block(now),
         "quiet": schedule.is_quiet_hours(now),

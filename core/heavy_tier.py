@@ -21,10 +21,14 @@ import httpx
 
 from core import hwfit
 
+import glob
+import re
+
 LLAMA_SERVER = os.getenv("KAMIL_LLAMA_SERVER", r"C:\llama.cpp\build\bin\llama-server.exe")
 HEAVY_PORT = int(os.getenv("KAMIL_HEAVY_PORT", "8086"))
 HEAVY_URL = f"http://127.0.0.1:{HEAVY_PORT}"
-HEAVY_MODEL = os.getenv("KAMIL_HEAVY_MODEL", r"C:\kamil\models\qwen2.5-coder-14b-q4.gguf")
+MODELS_DIR = os.getenv("KAMIL_MODELS_DIR", r"C:\kamil\models")
+_HEAVY_FALLBACK = r"C:\kamil\models\qwen2.5-coder-14b-q4.gguf"
 CHAT_VRAM_GB = float(os.getenv("KAMIL_CHAT_VRAM_GB", "6"))     # reserve for the chat tier
 IDLE_UNLOAD_SECONDS = int(os.getenv("KAMIL_HEAVY_IDLE", "600"))
 
@@ -33,8 +37,68 @@ _lock = threading.RLock()
 _idle_timer: threading.Timer | None = None
 
 
+def _coder_score(path: str) -> int:
+    n = os.path.basename(path).lower()
+    s = 0
+    if "coder" in n: s += 20
+    if "qwen3" in n: s += 8
+    if "a3b" in n: s += 6
+    if "30b" in n or "32b" in n: s += 5
+    if "14b" in n: s += 1
+    return s
+
+
+def heavy_model() -> str:
+    """Resolve the coding model path, re-checked live so a newly-downloaded model is
+    picked up without a config edit. Explicit KAMIL_HEAVY_MODEL wins if the file
+    exists; otherwise pick the best coder GGUF in the models dir (prefers
+    Qwen3-Coder / A3B / larger). Split GGUFs resolve to their first shard."""
+    env = os.getenv("KAMIL_HEAVY_MODEL")
+    if env and os.path.isfile(env):
+        return env
+    try:
+        ggufs = glob.glob(os.path.join(MODELS_DIR, "*.gguf"))
+        ggufs = [g for g in ggufs
+                 if "-of-" not in os.path.basename(g).lower() or "00001-of-" in os.path.basename(g).lower()]
+        coders = [g for g in ggufs if "coder" in os.path.basename(g).lower()]
+        if coders:
+            return max(coders, key=_coder_score)
+    except Exception:
+        pass
+    return env or _HEAVY_FALLBACK
+
+
+def _total_weights_gb(path: str) -> float:
+    """Total on-disk size in GB, summing all shards of a split GGUF."""
+    try:
+        base = os.path.basename(path)
+        m = re.match(r'(.*)-\d+-of-\d+\.gguf$', base, re.I)
+        if m:
+            shards = glob.glob(os.path.join(os.path.dirname(path), m.group(1) + "-*-of-*.gguf"))
+            if shards:
+                return sum(os.path.getsize(s) for s in shards) / 1073741824
+        return os.path.getsize(path) / 1073741824
+    except OSError:
+        return 0.0
+
+
+# Snapshot for labels/logs; functions below re-resolve live via heavy_model().
+HEAVY_MODEL = heavy_model()
+
+
 def available() -> bool:
-    return os.path.isfile(HEAVY_MODEL)
+    return os.path.isfile(heavy_model())
+
+
+def label() -> str:
+    """Short label for the resolved coder, e.g. 'coder-30b-a3b' / 'coder-14b'."""
+    env = os.getenv("KAMIL_HEAVY_LABEL")
+    if env:
+        return env
+    n = os.path.splitext(os.path.basename(heavy_model()))[0].lower()
+    n = re.sub(r'-\d+-of-\d+$', '', n)
+    m = re.search(r'(\d+x?\d*b(?:-a\d+b)?)', n)
+    return ("coder-" + m.group(1)) if m else "coder"
 
 
 def _is_running() -> bool:
@@ -61,7 +125,9 @@ def plan() -> tuple[dict, dict]:
     code + tool schema + history) doesn't overflow and 400. q4_0 KV keeps that 32k
     cache small enough to still fit on the GPU alongside the chat tier."""
     ctx = int(os.getenv("KAMIL_HEAVY_CTX", "32768"))
-    meta = hwfit.model_meta(HEAVY_MODEL)
+    path = heavy_model()
+    meta = hwfit.model_meta(path)
+    meta["weights_gb"] = _total_weights_gb(path)   # sum shards for split GGUFs
     avail = hwfit.detect_vram_gb() - CHAT_VRAM_GB
     return meta, hwfit.fit_profile(meta, vram_gb=avail, ctx=ctx, kv_type="q4_0")
 
@@ -122,10 +188,10 @@ def ensure_loaded(timeout: int = 240) -> bool:
             _arm_idle()
             return True
         if not available():
-            print(f"[heavy] model not found: {HEAVY_MODEL}")
+            print(f"[heavy] model not found: {heavy_model()}")
             return False
         meta, prof = plan()
-        args = hwfit.serve_args(HEAVY_MODEL, prof, HEAVY_PORT)
+        args = hwfit.serve_args(heavy_model(), prof, HEAVY_PORT)
         print(f"[heavy] loading {meta['name']} — {prof['note']} (est {prof['est_vram_gb']}GB)")
         _proc = subprocess.Popen([LLAMA_SERVER] + args,
                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
