@@ -210,7 +210,7 @@ class TrustUpdateRequest(BaseModel):
 @app.get("/")
 async def index():
     html_path = os.path.join(os.path.dirname(__file__), "index.html")
-    with open(html_path, "r") as f:
+    with open(html_path, "r", encoding="utf-8") as f:
         return HTMLResponse(f.read())
 
 @app.get("/presence")
