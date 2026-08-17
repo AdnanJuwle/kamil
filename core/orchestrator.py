@@ -507,6 +507,9 @@ class Orchestrator:
             "asked to create/make a file, your response is the ```tool write_file call — put "
             "the plain code in its content field (no ``` fences, real newlines), then confirm "
             "from the result. Build what the user asked for.\n"
+            "Do NOT print the code anywhere except inside the write_file tool call — writing "
+            "it once in prose and again in the tool call wastes your output budget and can "
+            "cut the tool call off. Emit the ```tool block directly, no code before it.\n"
             "Don't run GUI apps or long-running/blocking programs with shell (they hang and "
             "time out) — verify code with a py_compile shell command instead, then tell the "
             "user how to run it.\n"
@@ -521,10 +524,15 @@ class Orchestrator:
         # leaving room for tool results + generation within a 32k window.
         messages = self._cap_prompt(messages, max_chars=int(os.getenv("KAMIL_AGENT_PROMPT_CHARS", "88000")))
 
+        # A tool call carrying a whole file needs room — the default 1024-token cap
+        # truncated the write_file JSON mid-way (nothing executed). Give the agent
+        # a big output budget so tool calls complete.
+        agent_max = int(os.getenv("KAMIL_AGENT_MAX_TOKENS", "6000"))
+
         # Only spin up the heavy coding model for actual CODING tasks. Web lookups,
         # file reads, and general questions run the agent on the fast 8B (no ~30s
         # spin-up), which still calls tools (web_search, read_file, etc.).
-        model_fn = lambda msgs: self.client.chat(msgs)
+        model_fn = lambda msgs: self.client.chat(msgs, max_tokens=agent_max)
         _heavy = None
         if os.getenv("KAMIL_AGENT_HEAVY", "1") == "1" and self._looks_like_coding(user_message):
             try:
@@ -534,7 +542,7 @@ class Orchestrator:
                     if heavy_tier.ensure_loaded():
                         from models.client import LlamaClient
                         _hc = LlamaClient(base_url=heavy_tier.HEAVY_URL)
-                        model_fn = lambda msgs: _hc.chat(msgs)
+                        model_fn = lambda msgs: _hc.chat(msgs, max_tokens=agent_max)
                         _heavy = heavy_tier
             except Exception as _e:
                 print(f"[orchestrator] heavy tier unavailable: {_e}")
