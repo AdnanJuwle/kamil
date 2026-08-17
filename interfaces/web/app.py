@@ -744,14 +744,22 @@ You have persistent memory. When memory is injected, it is real — from actual 
         ]
         is_followup = any(kw in message.content.lower() for kw in followup_keywords)
 
-        # No separate voice model running -> don't do the quick-pass/handoff dance
-        # (it would just emit a spurious "let me check that for you" and stall).
-        # Answer straight from the primary conversational model.
+        # No separate voice model running -> answer straight from the primary model
+        # using the LEAN voice prompt (already built above), NOT the heavy
+        # _build_messages (full memory dump + domain RAG over ~29k chunks + code
+        # context). The lean prompt is ~500 tokens and its prefix stays stable, so
+        # llama caches it and each reply is a quick eval + short generation instead
+        # of re-processing thousands of tokens every turn. Strip the handoff line
+        # since there's no second stage to hand off to.
         if not _voice_model_up():
-            full_messages = kamil._build_messages(message.content)
-            full_messages[0]["content"] += "\n\nVoice response: max 4 sentences, no markdown, no lists, natural spoken language."
-            full_messages[-1]["content"] = "/no_think " + full_messages[-1]["content"]
-            full_response = kamil.client.chat(full_messages, max_tokens=200, temperature=0.7)
+            lean_system = voice_system.replace(
+                '- For complex technical questions needing code or file context: say "let me check that for you"',
+                '- Answer everything directly and concisely in a spoken tone — never defer or say you will "check"')
+            lean_messages = [
+                {"role": "system", "content": lean_system},
+                {"role": "user", "content": f"/no_think {message.content}"},
+            ]
+            full_response = kamil.client.chat(lean_messages, max_tokens=160, temperature=0.7)
             if not full_response or not full_response.strip():
                 full_response = "I'm having trouble forming a response on that right now. Try asking again."
             print(f"Primary response (no voice model): {full_response[:100]}")
