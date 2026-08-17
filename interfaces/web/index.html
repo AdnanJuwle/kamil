@@ -494,16 +494,29 @@
     return false;
   }
 
+  // Short follow-ups that continue the previous request ("and?", "the answer?",
+  // "check again", "do it") — keep them on the agent if the last turn used it, so
+  // a web-search/task conversation doesn't fall back to a hallucinating reply.
+  let lastRoute = 'chat';
+  function isContinuation(t) {
+    const s = t.toLowerCase().trim().replace(/[?.!]+$/, '');
+    if (/^(and|so|then|now|ok|okay|go on|go ahead|continue|keep going|proceed|do it|yes|yep|please do|the answer|what.?s the answer|and the answer|check again|and now|result|show me|next|what did you (get|find)|did you)\b/.test(s)) return true;
+    return s.split(/\s+/).length <= 4;   // terse follow-up
+  }
+
   async function sendMessage() {
     const text = inputEl.value.trim();
     if (!text || sendBtn.disabled) return;
     inputEl.value = ''; inputEl.style.height = 'auto';
     setDisabled(true); appendUser(text);
 
-    if (text.startsWith('/council')) { await sendCouncil(text.slice(8).trim()); setDisabled(false); inputEl.focus(); return; }
-    if (text.startsWith('/agent')) { await sendAgent(text.slice(6).trim()); setDisabled(false); inputEl.focus(); return; }
-    if (text.startsWith('/chat')) { /* force plain chat */ return plainChat(text.slice(5).trim()); }
-    if (looksLikeTask(text)) { await sendAgent(text); setDisabled(false); inputEl.focus(); return; }
+    if (text.startsWith('/council')) { lastRoute='chat'; await sendCouncil(text.slice(8).trim()); setDisabled(false); inputEl.focus(); return; }
+    if (text.startsWith('/agent')) { lastRoute='agent'; await sendAgent(text.slice(6).trim()); setDisabled(false); inputEl.focus(); return; }
+    if (text.startsWith('/chat')) { lastRoute='chat'; return plainChat(text.slice(5).trim()); }
+    if (looksLikeTask(text) || (lastRoute === 'agent' && isContinuation(text))) {
+      lastRoute = 'agent'; await sendAgent(text); setDisabled(false); inputEl.focus(); return;
+    }
+    lastRoute = 'chat';
     return plainChat(text);
   }
 

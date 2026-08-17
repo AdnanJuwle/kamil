@@ -109,6 +109,18 @@ class Orchestrator:
             self.history = self.history[n:]
             save_history(self.history)
 
+    def _looks_like_coding(self, message: str) -> bool:
+        """Does this task actually need the big coding model? (vs. a web lookup or
+        file read the 8B can drive.)"""
+        s = message.lower()
+        kw = ["code", "gui", "script", "program", "function", "class ", "method",
+              "refactor", "implement", "debug", "compile", "module", "api ",
+              "endpoint", "write a ", "create a file", "create a script",
+              "create a gui", "create a demo", "make a file", "edit the", "edit ",
+              "fix the", "add a ", "build a", "rewrite", "unit test", "the bug",
+              ".py", ".js", ".ts", ".html", ".css", ".java", ".cpp", ".ino"]
+        return any(k in s for k in kw)
+
     def _classify_intent(self, message: str) -> str:
         msg = message.lower()
         
@@ -226,6 +238,13 @@ class Orchestrator:
 
         intent = self._classify_intent(user_message)
         system = self.system_prompt
+        # Anti-hallucination for live facts in plain replies (agent mode overrides
+        # this with a web_search directive): never invent current prices, rates,
+        # scores, news, or "today" facts — say you'll look it up instead.
+        system += ("\n\nLIVE FACTS: You do not have live internet in a plain reply. For anything "
+                   "current — prices, exchange rates, scores, news, today's date-specific facts — do "
+                   "NOT make up a number or claim you searched. Say you'll look it up, and the user "
+                   "can ask you to. Never state a figure as current unless it came from a real search.")
 
         identity = load_identity()
         threads = get_threads_summary()
@@ -471,11 +490,12 @@ class Orchestrator:
             "answer' or 'I'm only trained to 2023'. You have web_search; use it."
         )
 
-        # Route agent/coding work to the heavy tier (bigger model, RAM-offloaded),
-        # keeping the fast 8B for chat. Falls back to the chat model if unavailable.
+        # Only spin up the heavy coding model for actual CODING tasks. Web lookups,
+        # file reads, and general questions run the agent on the fast 8B (no ~30s
+        # spin-up), which still calls tools (web_search, read_file, etc.).
         model_fn = lambda msgs: self.client.chat(msgs)
         _heavy = None
-        if os.getenv("KAMIL_AGENT_HEAVY", "1") == "1":
+        if os.getenv("KAMIL_AGENT_HEAVY", "1") == "1" and self._looks_like_coding(user_message):
             try:
                 from core import heavy_tier
                 if heavy_tier.available():

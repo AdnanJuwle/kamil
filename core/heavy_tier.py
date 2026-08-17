@@ -56,10 +56,14 @@ def state() -> str:
 
 
 def plan() -> tuple[dict, dict]:
-    """(meta, fit-profile) for the heavy model, fit into VRAM minus the chat tier."""
+    """(meta, fit-profile) for the heavy model, fit into VRAM minus the chat tier.
+    Match the chat model's context (32k) so the agent's big prompt (system + project
+    code + tool schema + history) doesn't overflow and 400. q4_0 KV keeps that 32k
+    cache small enough to still fit on the GPU alongside the chat tier."""
+    ctx = int(os.getenv("KAMIL_HEAVY_CTX", "32768"))
     meta = hwfit.model_meta(HEAVY_MODEL)
     avail = hwfit.detect_vram_gb() - CHAT_VRAM_GB
-    return meta, hwfit.fit_profile(meta, vram_gb=avail)
+    return meta, hwfit.fit_profile(meta, vram_gb=avail, ctx=ctx, kv_type="q4_0")
 
 
 def _arm_idle() -> None:
