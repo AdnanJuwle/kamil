@@ -792,18 +792,14 @@ async def voice_chat_stream(message: Message):
             yield f"data: {json.dumps({'type': 'text', 'text': text})}\n\n"
             spoken = clean_for_tts(text)
             if spoken.strip():
-                import asyncio, functools, re as _re
                 tts = get_tts()
-                loop = asyncio.get_event_loop()
-                # Split into sentences and synthesize each separately so the first
-                # sentence's audio ships while the rest render (Kokoro's own
-                # create_stream batches by phoneme count, so a short reply is one
-                # chunk — no streaming benefit). create() is blocking -> executor.
-                sentences = [s.strip() for s in _re.split(r'(?<=[.!?])\s+', spoken.strip()) if s.strip()]
+                # Kokoro's native create_stream batches by phoneme count and trims
+                # silence between batches for seamless concatenation — so chunks
+                # play GAPLESS. (Manual per-sentence create() left a synth-lag gap
+                # between sentences.) Short replies come as one chunk; longer ones
+                # stream in contiguous batches.
                 seq = 0
-                for sent in sentences:
-                    samples, sr = await loop.run_in_executor(
-                        None, functools.partial(tts.create, sent, voice=KAMIL_VOICE, speed=1.1, lang="en-us"))
+                async for samples, sr in tts.create_stream(spoken, voice=KAMIL_VOICE, speed=1.1, lang="en-us"):
                     buf = io.BytesIO(); sf.write(buf, samples, sr, format="WAV"); buf.seek(0)
                     yield f"data: {json.dumps({'type': 'audio', 'seq': seq, 'audio': base64.b64encode(buf.read()).decode()})}\n\n"
                     seq += 1

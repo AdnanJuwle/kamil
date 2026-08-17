@@ -492,6 +492,22 @@
   inputEl.addEventListener('input', () => { inputEl.style.height='auto'; inputEl.style.height=Math.min(inputEl.scrollHeight,180)+'px'; });
   inputEl.addEventListener('keydown', e => { if (e.key==='Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } });
 
+  // Does this message want Kamil to DO something (use tools) rather than just
+  // chat? Tasks and anything needing current info go through the agent loop, which
+  // actually reads files, writes/runs code, spins up the coding model, and web
+  // searches — instead of the model just describing what it would do.
+  function looksLikeTask(t) {
+    const s = ' ' + t.toLowerCase().replace(/[^a-z0-9'./\- ]/g, ' ').replace(/\s+/g, ' ') + ' ';
+    // recent / real-world info -> web search
+    if (/\b(today|current|currently|latest|right now|this (week|month|year)|recent(ly)?|price|prices|stock|weather|news|score|exchange rate|dollar|usd|inr|euro|who won|as of)\b/.test(s)) return true;
+    // action verbs (do the thing)
+    if (/\b(create|write|make|build|generate|run|execute|fix|edit|change|add|implement|refactor|delete|remove|install|rename|move|append|look up|search for|google|find me|open the|read the|list the|grep|show me the|go through|check the|scan the|inspect|debug)\b/.test(s)) return true;
+    // codebase / files
+    if (/\.(py|js|ts|jsx|tsx|md|json|txt|html|css|java|cpp|c|rs|go|sh|yml|yaml|toml|ino)\b/.test(s)) return true;
+    if (/\b(folder|directory|repo|repository|codebase|file|files|function|functions|class|classes|algorithm|algorithms|the code|which functions|what methods)\b/.test(s)) return true;
+    return false;
+  }
+
   async function sendMessage() {
     const text = inputEl.value.trim();
     if (!text || sendBtn.disabled) return;
@@ -500,6 +516,12 @@
 
     if (text.startsWith('/council')) { await sendCouncil(text.slice(8).trim()); setDisabled(false); inputEl.focus(); return; }
     if (text.startsWith('/agent')) { await sendAgent(text.slice(6).trim()); setDisabled(false); inputEl.focus(); return; }
+    if (text.startsWith('/chat')) { /* force plain chat */ return plainChat(text.slice(5).trim()); }
+    if (looksLikeTask(text)) { await sendAgent(text); setDisabled(false); inputEl.focus(); return; }
+    return plainChat(text);
+  }
+
+  async function plainChat(text) {
 
     const contentEl = appendAssistant('', false);
     contentEl.textContent = 'thinking…';
