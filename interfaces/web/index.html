@@ -635,19 +635,53 @@
       mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
       mediaRecorder.onstop = async () => {
         stream.getTracks().forEach(t => t.stop());
+        stopVoiceViz();
         document.getElementById('mic-btn').classList.remove('active'); isRecording = false;
+        setPresence('at rest', 'present');
         if (audioChunks.length === 0) return;
         const blob = new Blob(audioChunks, { type:'audio/webm' }); audioChunks = [];
         const s = appendSystem('transcribing…');
+        setPresence('hearing you', '…');
         try {
           const res = await fetch('/transcribe', { method:'POST', headers:{'Content-Type':'audio/webm'}, body:blob });
           const data = await res.json(); s.remove();
-          if (data.text) await sendVoiceMessage(data.text); else appendSystem('could not transcribe audio');
-        } catch (e) { appendSystem('transcription error: ' + e.message); }
+          if (data.text) await sendVoiceMessage(data.text); else { appendSystem('could not transcribe audio'); setPresence('at rest','present'); }
+        } catch (e) { appendSystem('transcription error: ' + e.message); setPresence('at rest','present'); }
       };
       mediaRecorder.start(); isRecording = true;
-      document.getElementById('mic-btn').classList.add('active'); appendSystem('recording… tap mic to stop');
+      startVoiceViz(stream);
+      document.getElementById('mic-btn').classList.add('active'); appendSystem('listening… tap mic to send');
+      setPresence('listening', 'I hear you…');
     } catch (e) { appendSystem('mic error: ' + e.message); }
+  }
+
+  // Live mic-level feed so the presence core reacts to your voice while it listens.
+  let audioCtx = null, analyser = null, voiceRAF = null;
+  window.__voiceLevel = 0;
+  function startVoiceViz(stream) {
+    try {
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      const src = audioCtx.createMediaStreamSource(stream);
+      analyser = audioCtx.createAnalyser(); analyser.fftSize = 512;
+      src.connect(analyser);
+      const data = new Uint8Array(analyser.frequencyBinCount);
+      const loop = () => {
+        if (!analyser) return;
+        analyser.getByteTimeDomainData(data);
+        let sum = 0; for (let i = 0; i < data.length; i++) { const v = (data[i] - 128) / 128; sum += v * v; }
+        const rms = Math.sqrt(sum / data.length);
+        // smooth so the core swells and settles rather than jittering
+        window.__voiceLevel = window.__voiceLevel * 0.6 + Math.min(1, rms * 3.4) * 0.4;
+        voiceRAF = requestAnimationFrame(loop);
+      };
+      loop();
+    } catch {}
+  }
+  function stopVoiceViz() {
+    if (voiceRAF) cancelAnimationFrame(voiceRAF);
+    voiceRAF = null; analyser = null;
+    if (audioCtx) { audioCtx.close().catch(()=>{}); audioCtx = null; }
+    window.__voiceLevel = 0;
   }
   function enrollVoice() { document.getElementById('enroll-modal').classList.add('visible'); document.getElementById('enroll-name').focus(); }
   function closeEnrollModal() { document.getElementById('enroll-modal').classList.remove('visible'); }
@@ -954,17 +988,20 @@
     function frame(t){
       ctx.clearRect(0,0,W,H);
       const busy = (sendBtn.disabled || window.__bgActive) ? 1 : 0;
+      const vl = window.__voiceLevel || 0;   // 0..1 live mic level while listening
       const b=reduce?0.7:(0.5+0.5*Math.sin(t*(0.0011+busy*0.0009)));
-      const g=ctx.createRadialGradient(cx,cy,4,cx,cy,56+b*20);
-      g.addColorStop(0,'rgba(232,178,76,'+(0.32+b*0.15)+')');g.addColorStop(.5,'rgba(232,178,76,.07)');g.addColorStop(1,'rgba(232,178,76,0)');
+      const g=ctx.createRadialGradient(cx,cy,4,cx,cy,56+b*20+vl*46);
+      g.addColorStop(0,'rgba(232,178,76,'+(0.32+b*0.15+vl*0.3)+')');g.addColorStop(.5,'rgba(232,178,76,.07)');g.addColorStop(1,'rgba(232,178,76,0)');
       ctx.fillStyle=g;ctx.fillRect(0,0,W,H);
-      ctx.beginPath();ctx.arc(cx,cy,14+b*4,0,6.2832);
+      ctx.beginPath();ctx.arc(cx,cy,14+b*4+vl*11,0,6.2832);
       const cg=ctx.createRadialGradient(cx-4,cy-4,1,cx,cy,19);cg.addColorStop(0,'#FBE6B0');cg.addColorStop(1,'#D69836');ctx.fillStyle=cg;ctx.fill();
-      ring(42+b*3,0.5,1.4); ring(64,0.15,1); ring(88,0.07,1);
+      ring(42+b*3+vl*10,0.5,1.4); ring(64,0.15,1); ring(88,0.07,1);
+      // voice ring — a verdigris pulse that follows your voice while Kamil listens
+      if(vl>0.01){ctx.beginPath();ctx.arc(cx,cy,30+vl*66,0,6.2832);ctx.strokeStyle='rgba(90,168,150,'+(0.15+vl*0.6)+')';ctx.lineWidth=1.5+vl*2;ctx.stroke();}
       ctx.beginPath();ctx.arc(cx,cy,64,t*(0.0012+busy*0.0016),t*(0.0012+busy*0.0016)+2.1);ctx.strokeStyle='rgba(90,168,150,'+(0.4+busy*0.3)+')';ctx.lineWidth=2;ctx.stroke();
-      for(const m of motes){ if(!reduce)m.a+=m.sp*(1.7+busy*2.4);
+      for(const m of motes){ if(!reduce)m.a+=m.sp*(1.7+busy*2.4+vl*5);
         const x=cx+Math.cos(m.a)*m.r,y=cy+Math.sin(m.a)*m.r,tw=0.4+0.6*Math.abs(Math.sin(t*0.002+m.ph));
-        ctx.beginPath();ctx.arc(x,y,m.sz,0,6.2832);ctx.fillStyle='rgba(240,206,140,'+(0.2+tw*0.5)+')';ctx.fill();}
+        ctx.beginPath();ctx.arc(x,y,m.sz+vl*1.5,0,6.2832);ctx.fillStyle='rgba(240,206,140,'+(0.2+tw*0.5+vl*0.3)+')';ctx.fill();}
       requestAnimationFrame(frame);
     }
     requestAnimationFrame(frame);
