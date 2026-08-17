@@ -59,9 +59,38 @@ class AgentResume(BaseModel):
 
 _kokoro = None
 
+def _enable_cuda_tts() -> bool:
+    """Put the nvidia cuDNN/cuBLAS/CUDA-runtime wheel DLLs on the search path and
+    select the CUDA provider for onnxruntime (Kokoro). add_dll_directory alone does
+    NOT reach ORT's dependent-DLL resolution — PATH does — so we set both. Returns
+    True if CUDA is usable. Falls back to CPU cleanly otherwise."""
+    try:
+        import onnxruntime as _ort, glob
+        if "CUDAExecutionProvider" not in _ort.get_available_providers():
+            return False
+        nvidia_root = os.path.abspath(os.path.join(os.path.dirname(_ort.__file__), "..", "nvidia"))
+        bins = [os.path.abspath(p) for p in glob.glob(os.path.join(nvidia_root, "*", "bin")) if os.path.isdir(p)]
+        if not bins:
+            return False
+        os.environ["PATH"] = os.pathsep.join(bins) + os.pathsep + os.environ.get("PATH", "")
+        for b in bins:
+            try:
+                os.add_dll_directory(b)
+            except Exception:
+                pass
+        os.environ["ONNX_PROVIDER"] = "CUDAExecutionProvider"
+        return True
+    except Exception as _e:
+        print(f"Kokoro TTS: CUDA setup failed, CPU ({_e})")
+        return False
+
 def get_tts():
     global _kokoro
     if _kokoro is None:
+        # Kokoro on CPU runs ~1.4x real-time (the voice bottleneck). Run it on the
+        # GPU when available — modest (~1.3x) since the ONNX graph has many Memcpy
+        # nodes, but it keeps synthesis ahead of streamed playback.
+        print("Kokoro TTS:", "CUDAExecutionProvider (GPU)" if _enable_cuda_tts() else "CPU")
         print("Loading Kokoro TTS...")
         _kokoro = Kokoro(KOKORO_MODEL, KOKORO_VOICES)
         print("Kokoro ready")
@@ -118,6 +147,17 @@ kamil.enable_context(indexer)
 available_projects = indexer.list_projects()
 print(f"Projects available (lazy): {', '.join(available_projects)}")
 # No auto-load, no auto-scan
+
+# Warm up Kokoro TTS in the background (load onto GPU + compile kernels) so the
+# first voice reply isn't a cold ~15s stall.
+import threading as _thr
+def _warm_tts():
+    try:
+        synthesize_to_wav("Ready.")
+        print("Kokoro warmup done")
+    except Exception as _e:
+        print(f"Kokoro warmup failed: {_e}")
+_thr.Thread(target=_warm_tts, daemon=True).start()
 
 # ── Heartbeat: Kamil's proactive presence ─────────────────────────
 import threading
@@ -662,16 +702,7 @@ async def quick_voice_response(messages: list[dict]) -> str:
         print(f"Voice model error: {type(e).__name__}: {e}")
         return ""
 
-@app.post("/voice_chat")
-async def voice_chat(message: Message):
-    try:
-        print(f"voice_chat called: {message.content}")
-        
-        # Phase 1 — quick response from voice model
-        identity = load_identity()
-        threads = get_threads_summary()
-        
-        voice_system = """You are Kamil, Adnan's fully local personal AI assistant responding via voice.
+VOICE_SYSTEM_BASE = """You are Kamil, Adnan's fully local personal AI assistant responding via voice.
 
 ## IDENTITY
 You are built for Adnan, a Muslim engineer from India. You approach the world through an Islamic lens as a natural default. You are honest, direct, and treat Adnan like a close friend and peer who shares your faith.
@@ -707,6 +738,83 @@ You have persistent memory. When memory is injected, it is real — from actual 
 - You can engage critically with Islamic questions — Adnan wants honest answers not just validation
 
 """
+
+def _build_voice_messages(content: str) -> list[dict]:
+    """The lean voice prompt (identity + speaker + threads + religious context),
+    with the handoff line stripped since there's no second stage. Small + stable
+    prefix, so llama caches it and replies are quick."""
+    voice_system = VOICE_SYSTEM_BASE
+    identity = load_identity()
+    threads = get_threads_summary()
+    if identity.get("name"):
+        voice_system += f"\nUser's name: {identity['name']}"
+    if threads:
+        voice_system += f"\nOngoing projects: {threads}"
+    from memory.speaker import get_current_speaker
+    cs = get_current_speaker()
+    if cs and cs.identified:
+        voice_system += (f"\n\nSpeaker identified by voice: {cs.speaker_name} "
+                         f"(trust: {cs.trust_level}, confidence: {cs.confidence})"
+                         f"\nYou recognized this person by their voice — acknowledge this naturally if asked.")
+    if is_religious_query(content):
+        rr = query_religious(content, n_results=3)
+        if rr:
+            ctx = "\n\n".join(f"[{r['source']}, page {r['page']}]\n{r['text'][:400]}" for r in rr)
+            voice_system += f"\n\nRelevant Islamic sources — quote accurately:\n{ctx}"
+    voice_system = voice_system.replace(
+        '- For complex technical questions needing code or file context: say "let me check that for you"',
+        '- Answer everything directly and concisely in a spoken tone — never defer or say you will "check"')
+    return [{"role": "system", "content": voice_system},
+            {"role": "user", "content": f"/no_think {content}"}]
+
+@app.post("/voice_chat_stream")
+async def voice_chat_stream(message: Message):
+    """Voice reply as an SSE stream: the text first, then Kokoro audio chunk by
+    chunk (create_stream) so playback starts on the first sentence instead of
+    waiting for the whole reply to synthesize. This is what makes voice feel fast."""
+    async def gen():
+        try:
+            resp = kamil.client.chat(_build_voice_messages(message.content), max_tokens=160, temperature=0.7)
+            text = (resp or "").strip() or "I'm having trouble forming a response on that right now. Try asking again."
+            print(f"Voice (stream): {text[:100]}")
+            kamil.history.append({"role": "user", "content": message.content})
+            kamil.history.append({"role": "assistant", "content": text})
+            save_history(kamil.history)
+            yield f"data: {json.dumps({'type': 'text', 'text': text})}\n\n"
+            spoken = clean_for_tts(text)
+            if spoken.strip():
+                import asyncio, functools, re as _re
+                tts = get_tts()
+                loop = asyncio.get_event_loop()
+                # Split into sentences and synthesize each separately so the first
+                # sentence's audio ships while the rest render (Kokoro's own
+                # create_stream batches by phoneme count, so a short reply is one
+                # chunk — no streaming benefit). create() is blocking -> executor.
+                sentences = [s.strip() for s in _re.split(r'(?<=[.!?])\s+', spoken.strip()) if s.strip()]
+                seq = 0
+                for sent in sentences:
+                    samples, sr = await loop.run_in_executor(
+                        None, functools.partial(tts.create, sent, voice=KAMIL_VOICE, speed=1.1, lang="en-us"))
+                    buf = io.BytesIO(); sf.write(buf, samples, sr, format="WAV"); buf.seek(0)
+                    yield f"data: {json.dumps({'type': 'audio', 'seq': seq, 'audio': base64.b64encode(buf.read()).decode()})}\n\n"
+                    seq += 1
+            yield f"data: {json.dumps({'type': 'done'})}\n\n"
+            yield "data: [DONE]\n\n"
+        except Exception as e:
+            import traceback; traceback.print_exc()
+            yield f"data: {json.dumps({'type': 'error', 'error': str(e)})}\n\n"
+    return StreamingResponse(gen(), media_type="text/event-stream")
+
+@app.post("/voice_chat")
+async def voice_chat(message: Message):
+    try:
+        print(f"voice_chat called: {message.content}")
+
+        # Phase 1 — quick response from voice model
+        identity = load_identity()
+        threads = get_threads_summary()
+
+        voice_system = VOICE_SYSTEM_BASE
         if identity.get("name"):
             voice_system += f"\nUser's name: {identity['name']}"
         if threads:
