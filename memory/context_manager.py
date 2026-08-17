@@ -27,8 +27,10 @@ from datetime import datetime
 CACHE_PATH = r"C:\kamil\data\context_cache.json"
 
 # Token budget estimates (rough: 1 token ≈ 4 chars)
-MAX_RAM_CHARS = 12000       # ~3000 tokens of raw messages in context
-MAX_CACHE_SIZE = 60         # max messages in cache
+# ~10k tokens of raw recent conversation kept live (we run a 32k context window),
+# so Kamil remembers the whole current conversation, not just a few turns.
+MAX_RAM_CHARS = int(os.getenv("KAMIL_RAM_CHARS", "44000"))
+MAX_CACHE_SIZE = 120        # max messages in cache
 CACHE_HIT_THRESHOLD = 0.55  # score above this → promote to RAM
 EVICT_THRESHOLD = 0.35      # score below this → move to ROM
 DECISION_FLOOR = 0.60       # decision markers never score below this in cache

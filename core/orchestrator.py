@@ -96,11 +96,17 @@ class Orchestrator:
             self.council = None
 
     def _maybe_compress(self):
-        if should_compress(self.history):
-            to_compress = self.history[:8]
+        # Keep a long rolling window in active context (we have a 32k window); only
+        # archive the OLDEST turns to long-term memory once history gets big, so
+        # Kamil actually remembers the current conversation instead of forgetting
+        # after ~4 exchanges. Tunable via env.
+        limit = int(os.getenv("KAMIL_HISTORY_LIMIT", "50"))
+        retain = int(os.getenv("KAMIL_HISTORY_RETAIN", "36"))
+        if len(self.history) >= limit:
+            n = max(1, len(self.history) - retain)   # archive oldest, keep `retain` recent
             current_project = self.indexer.current_project if self.indexer else ""
-            compress_messages(to_compress, current_project)
-            self.history = self.history[8:]
+            compress_messages(self.history[:n], current_project)
+            self.history = self.history[n:]
             save_history(self.history)
 
     def _classify_intent(self, message: str) -> str:
@@ -372,13 +378,18 @@ class Orchestrator:
         elif intent == "self":
             system += "\n\nThe user is asking about you or your memory. Answer from your knowledge about the user and your memory system. Do not reference code or project files."
 
+        # Keep a long conversational window in the prompt (32k context) so Kamil
+        # remembers this conversation, not just the last couple of turns.
+        ctx_keep = int(os.getenv("KAMIL_CONTEXT_MSGS", "30"))
+        ctx_budget = int(os.getenv("KAMIL_CONTEXT_CHARS", "60000"))
         context_messages = self.ctx.build_context(user_message)
-        if len(context_messages) > 4:
-            context_messages = context_messages[-4:]
+        if len(context_messages) > ctx_keep:
+            context_messages = context_messages[-ctx_keep:]
 
         total_chars = len(system) + sum(len(m.get("content","")) for m in context_messages)
-        if total_chars > 24000:
-            context_messages = self.ctx.ram[-4:]
+        while total_chars > ctx_budget and len(context_messages) > 4:
+            context_messages = context_messages[2:]   # drop oldest, keep the tail
+            total_chars = len(system) + sum(len(m.get("content","")) for m in context_messages)
 
         try:
             from actions.emcp_client import is_available, format_for_prompt
