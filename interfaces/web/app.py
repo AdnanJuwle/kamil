@@ -248,6 +248,7 @@ async def status():
         ],
         "block": schedule.current_block(now),
         "quiet": schedule.is_quiet_hours(now),
+        "project": getattr(indexer, "current_project", None),
     }
 
 @app.get("/activity")
@@ -292,21 +293,11 @@ async def get_history():
 
 @app.post("/select_project")
 async def select_project(data: ProjectSelect):
-    # Lightweight scan only — no embedding
-    with activity.task("scanning project", data.project_name):
-        structure = indexer.scan_project_structure(data.project_name)
-
-    # Set as current project for context
-    indexer.current_project = data.project_name
-    kamil.set_project(data.project_name, indexer)
-
-    return {
-        "status": "ok",
-        "project": data.project_name,
-        "files": structure.get("total_files", 0),
-        "py_files": structure.get("total_py_files", 0),
-        "mode": "lazy"  # tells frontend no full index yet
-    }
+    # Kamil opens projects himself now (auto-switch on mention, or the
+    # open_project tool); this endpoint stays as a manual override / API hook and
+    # routes through the same single open_project path.
+    ok = kamil.open_project(data.project_name)
+    return {"status": "ok" if ok else "error", "project": indexer.current_project}
 @app.post("/chat")
 async def chat(message: Message):
     return StreamingResponse(

@@ -407,6 +407,37 @@ def _learn(params: dict) -> ToolResult:
     return ToolResult(success=True, output=r, tool="learn", params=params)
 
 
+def _list_projects(params: dict) -> ToolResult:
+    """List the projects Kamil can open, and which one is loaded now."""
+    from core.orchestrator import get_orchestrator
+    orch = get_orchestrator()
+    if not orch or not orch.indexer:
+        return ToolResult(success=False, error="no project indexer available", tool="list_projects", params=params)
+    return ToolResult(success=True, tool="list_projects", params=params, output={
+        "projects": orch.indexer.list_projects(),
+        "current": orch.indexer.current_project,
+    })
+
+
+def _open_project(params: dict) -> ToolResult:
+    """Load a codebase into context so Kamil can read/reason about it. Accepts an
+    exact or partial name; resolves against the available projects."""
+    from core.orchestrator import get_orchestrator
+    orch = get_orchestrator()
+    if not orch or not orch.indexer:
+        return ToolResult(success=False, error="no project indexer available", tool="open_project", params=params)
+    name = (params.get("name", "") or "").strip()
+    available = orch.indexer.list_projects()
+    match = next((p for p in available if p.lower() == name.lower()), None) \
+        or next((p for p in sorted(available, key=len, reverse=True) if name and name.lower() in p.lower()), None)
+    if not match:
+        return ToolResult(success=False, tool="open_project", params=params,
+                          error=f"no project matching '{name}'. available: {', '.join(available)}")
+    orch.open_project(match)
+    return ToolResult(success=True, tool="open_project", params=params,
+                      output={"opened": match, "current": match})
+
+
 def _get_system_info(params: dict) -> ToolResult:
     import platform
     try:
@@ -594,6 +625,22 @@ TOOLS: dict[str, Tool] = {
         ],
         permission=Permission.AUTO,
         execute=_update_memory
+    ),
+    "list_projects": Tool(
+        name="list_projects",
+        description="List the codebases/projects you can open, and which one is currently loaded.",
+        params=[],
+        permission=Permission.AUTO,
+        execute=_list_projects
+    ),
+    "open_project": Tool(
+        name="open_project",
+        description="Load a project/codebase into context so you can read and reason about its files. Do this yourself whenever a task or question needs a project you don't have loaded. Accepts an exact or partial name.",
+        params=[
+            ToolParam("name", "string", required=True, description="Project name (exact or partial), e.g. 'prana'"),
+        ],
+        permission=Permission.AUTO,
+        execute=_open_project
     ),
 }
 

@@ -46,11 +46,12 @@
     font-size:11px; color:var(--muted); }
   .topbar .right .blk { color:var(--machine); }
   .topbar .right .sep { width:1px; height:16px; background:var(--line); }
-  .topbar select, .topbar .tbtn { background:var(--raised-2); color:var(--muted); border:1px solid var(--line);
+  .topbar .tbtn { background:var(--raised-2); color:var(--muted); border:1px solid var(--line);
     border-radius:7px; padding:4px 8px; font-family:var(--mono); font-size:10.5px; cursor:pointer; }
   .topbar .tbtn:hover { color:var(--ink); }
-  #project-status { font-family:var(--mono); font-size:10px; color:var(--faint); }
-  #project-status.active { color:var(--machine); } #project-status.loading { color:var(--life); }
+  .proj { display:flex; align-items:center; gap:6px; font-family:var(--mono); font-size:10.5px; color:var(--machine); }
+  .proj[hidden] { display:none; }
+  .proj .pdi { width:6px; height:6px; border-radius:2px; background:var(--machine); box-shadow:0 0 6px var(--machine); }
 
   .body { display:grid; grid-template-columns:64px 1fr 316px; min-height:0; }
 
@@ -203,9 +204,7 @@
       <span class="chip" id="tier-heavy"><span class="led"></span>heavy <b>coder-14b</b></span>
     </div>
     <div class="right">
-      <select id="project-select"><option value="">no project</option></select>
-      <button class="tbtn" id="load-btn" onclick="loadProject()">load</button>
-      <span id="project-status">—</span>
+      <span class="proj" id="proj-indicator" hidden><span class="pdi"></span><span id="proj-name"></span></span>
       <span class="sep"></span>
       <span class="blk" id="sched-block">—</span>
       <span id="clock">—</span>
@@ -284,9 +283,6 @@
   const messagesEl = document.getElementById('messages');
   const inputEl = document.getElementById('input');
   const sendBtn = document.getElementById('send-btn');
-  const projectSelect = document.getElementById('project-select');
-  const projectStatus = document.getElementById('project-status');
-  const loadBtn = document.getElementById('load-btn');
   let agentApprovalResolve = null;
   let mediaRecorder = null, audioChunks = [], isRecording = false, currentAudio = null, disabledTimeout = null;
 
@@ -601,33 +597,13 @@
     document.getElementById('learn-file').value = '';
   }
 
-  // ── projects / session ──
-  async function loadProjects() {
-    try { const res = await fetch('/projects'); const data = await res.json();
-      (data.projects||[]).forEach(p => { const o=document.createElement('option'); o.value=p; o.textContent=p; projectSelect.appendChild(o); });
-    } catch {}
-  }
-  async function loadProject() {
-    const name = projectSelect.value; if (!name) return;
-    loadBtn.disabled = true; projectStatus.textContent = 'indexing…'; projectStatus.className = 'loading';
-    try {
-      const res = await fetch('/select_project', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({project_name:name}) });
-      const data = await res.json();
-      projectStatus.textContent = data.chunks==='cached' ? (name+' · cached') : (name + ' · ' + (data.py_files||data.files||0) + ' files');
-      projectStatus.className = 'active';
-    } catch { projectStatus.textContent = 'error'; projectStatus.className = ''; }
-    loadBtn.disabled = false;
-  }
+  // ── session ── (Kamil opens projects himself; no manual load control)
   async function resetChat() { await fetch('/reset', {method:'POST'}); messagesEl.innerHTML=''; appendSystem('conversation cleared'); }
   async function restoreSession() {
     try {
       const res = await fetch('/history'); const data = await res.json();
       if (data.history && data.history.length) {
         data.history.forEach(m => { if (m.role==='user') appendUser(m.content); else if (m.role==='assistant') appendAssistant(m.content, false); });
-      }
-      if (data.project) {
-        projectStatus.textContent = data.project + ' · restored'; projectStatus.className = 'active';
-        for (const o of projectSelect.options) if (o.value === data.project) { o.selected = true; break; }
       }
     } catch {}
   }
@@ -678,13 +654,18 @@
     }
     const blk = document.getElementById('sched-block');
     if (blk && data.block) { blk.textContent = data.block; blk.classList.toggle('quiet', !!data.quiet); }
+    const pi = document.getElementById('proj-indicator');
+    if (pi) {
+      if (data.project) { document.getElementById('proj-name').textContent = data.project; pi.hidden = false; }
+      else pi.hidden = true;
+    }
   }
 
   // clock
   function tick() { const d = new Date(); document.getElementById('clock').textContent = d.toLocaleDateString(undefined,{weekday:'short'}) + ', ' + d.toLocaleTimeString(undefined,{hour:'numeric',minute:'2-digit'}); }
   tick(); setInterval(tick, 30000);
 
-  loadProjects().then(restoreSession);
+  restoreSession();
   setInterval(pollPresence, 30000);
   pollActivity();
   setInterval(pollActivity, 3000);

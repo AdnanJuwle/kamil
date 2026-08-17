@@ -48,6 +48,15 @@ If the question requires deep reasoning, code analysis, project-specific knowled
 Never say anything else as a handoff. Either answer fully or say exactly "let me check that for you"."""
 
 
+_ACTIVE_ORCH = None   # the live Orchestrator, so tools can reach its indexer
+
+
+def get_orchestrator():
+    """The live Orchestrator instance (set on construction) — used by tools that
+    need the active project indexer, e.g. open_project."""
+    return _ACTIVE_ORCH
+
+
 class Orchestrator:
     def __init__(self):
         self.client = LlamaClient(base_url=LLAMA_SERVER_URL)
@@ -61,6 +70,8 @@ class Orchestrator:
         self.long_term = LongTermMemory()
         last_project = load_setting("last_project")
         self._last_project = last_project if last_project else None
+        global _ACTIVE_ORCH
+        _ACTIVE_ORCH = self   # so tools (open_project) can reach the live indexer
         self._new_user = is_new_user()
 
         # Initialize context manager
@@ -279,16 +290,14 @@ class Orchestrator:
         if thread_block:
             system += f"\n\n## ACTIVE THREAD\n{thread_block}"
 
-        if self.indexer and not self.indexer.current_project:
-            available = self.indexer.list_projects()
-            msg_lower = user_message.lower()
-            for project in available:
-                if project.lower() in msg_lower:
-                    print(f"[orchestrator] Project mention detected: {project} — scanning")
-                    self.indexer.scan_project_structure(project)
-                    self.indexer.current_project = project
-                    self.context_enabled = True
-                    break
+        # Auto-load / auto-switch: if the message names a known project, open it
+        # (switching even when another is already loaded). Kamil can also open one
+        # deliberately via the open_project tool.
+        if self.indexer:
+            mentioned = self.resolve_project(user_message)
+            if mentioned and mentioned != self.indexer.current_project:
+                print(f"[orchestrator] Project named: {mentioned} — auto-switching")
+                self.open_project(mentioned)
 
         available_projects = self.indexer.list_projects() if self.indexer else []
         if available_projects:
@@ -296,7 +305,8 @@ class Orchestrator:
             if self.indexer and self.indexer.current_project:
                 system += f"\nCurrently loaded: {self.indexer.current_project}"
             else:
-                system += "\nNo project loaded. Will auto-load when user mentions a project name."
+                system += ("\nNo project loaded. Name a project to load it, or use the "
+                           "open_project tool when a task needs one.")
 
         # Domain/skill retrieval: always query the library and let SIMILARITY decide
         # (the old keyword gate blocked ~40% of valid queries; the 0.55 cutoff sat
@@ -618,6 +628,30 @@ class Orchestrator:
         self.history.append({"role": "assistant", "content": result["final"]})
         save_history(self.history)
         return result
+
+    def resolve_project(self, text: str) -> str | None:
+        """The known project explicitly named in `text`, if any (longest match wins
+        so 'kamil_v2' beats 'kamil'). Returns None when nothing is named."""
+        if not self.indexer:
+            return None
+        tl = (text or "").lower()
+        for p in sorted(self.indexer.list_projects(), key=len, reverse=True):
+            if p.lower() in tl:
+                return p
+        return None
+
+    def open_project(self, project_name: str) -> bool:
+        """Load a project into context: scan it, make it current, wire the prompt
+        block. This is the single path — auto-detect, the open_project tool, and
+        the endpoint all go through here."""
+        if not self.indexer:
+            return False
+        from core import activity
+        with activity.task("opening project", project_name):
+            self.indexer.scan_project_structure(project_name)
+            self.indexer.current_project = project_name
+            self.set_project(project_name, self.indexer)
+        return True
 
     def set_project(self, project_name: str, indexer):
         self.enable_context(indexer)
