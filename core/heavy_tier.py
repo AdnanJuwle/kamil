@@ -46,6 +46,15 @@ def _is_running() -> bool:
         return False
 
 
+def state() -> str:
+    """UI-facing tier state: 'warm' (ready), 'loading' (weights loading), 'off'."""
+    try:
+        code = httpx.get(f"{HEAVY_URL}/health", timeout=2).status_code
+        return "warm" if code == 200 else "loading"
+    except Exception:
+        return "off"
+
+
 def plan() -> tuple[dict, dict]:
     """(meta, fit-profile) for the heavy model, fit into VRAM minus the chat tier."""
     meta = hwfit.model_meta(HEAVY_MODEL)

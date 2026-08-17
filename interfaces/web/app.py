@@ -226,6 +226,30 @@ async def presence_poll():
         save_history(kamil.history)
     return {"messages": msgs}
 
+CHAT_LABEL = os.getenv("KAMIL_CHAT_LABEL", "lexi-8b")
+HEAVY_LABEL = os.getenv("KAMIL_HEAVY_LABEL", "coder-14b")
+
+@app.get("/status")
+async def status():
+    """Live tier + schedule state for the top bar. Reflects what's actually
+    loaded: the chat model (8080) stays resident; the heavy model (8086) is
+    on-demand and idle-unloads."""
+    from core import heavy_tier, schedule, config
+    try:
+        chat_code = httpx.get(f"{config.LLAMA_SERVER_URL}/health", timeout=1).status_code
+    except Exception:
+        chat_code = 0
+    chat_state = "live" if chat_code == 200 else ("loading" if chat_code == 503 else "off")
+    now = _dt.now()
+    return {
+        "tiers": [
+            {"id": "chat", "label": "chat", "model": CHAT_LABEL, "state": chat_state},
+            {"id": "heavy", "label": "heavy", "model": HEAVY_LABEL, "state": heavy_tier.state()},
+        ],
+        "block": schedule.current_block(now),
+        "quiet": schedule.is_quiet_hours(now),
+    }
+
 @app.get("/activity")
 async def activity_poll():
     """Background work Kamil is doing right now (indexing, scans, model loads,
