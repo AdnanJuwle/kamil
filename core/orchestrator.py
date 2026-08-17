@@ -437,7 +437,11 @@ class Orchestrator:
             "Rules: never write out or guess a tool's result before you run it — call "
             "the tool and use the REAL result. Don't repeat a tool call you already "
             "made. Once a tool gives you what you need, ANSWER from it directly — never "
-            "say 'we need to look at the file' after you've already read it."
+            "say 'we need to look at the file' after you've already read it.\n"
+            "CURRENT INFO: your training stops at 2023, so for ANY question about recent "
+            "events, news, people, prices, or 'latest' anything, your FIRST action is "
+            "web_search — then read/answer with what you found. NEVER reply 'I can't "
+            "answer' or 'I'm only trained to 2023'. You have web_search; use it."
         )
 
         # Route agent/coding work to the heavy tier (bigger model, RAM-offloaded),
