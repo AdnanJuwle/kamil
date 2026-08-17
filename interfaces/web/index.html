@@ -206,6 +206,27 @@
     text-transform:uppercase; color:var(--faint); margin-top:5px; }
 
   /* overlays */
+  #glance { position:fixed; inset:0; background:rgba(10,8,6,.68); display:none; place-items:center; z-index:60;
+    backdrop-filter:blur(2px); }
+  #glance.visible { display:grid; }
+  .glance-card { width:380px; max-width:92vw; background:var(--raised-2); border:1px solid var(--line); border-radius:16px;
+    padding:22px 24px; box-shadow:0 24px 70px rgba(0,0,0,.55); }
+  .glance-title { font-family:var(--serif); font-size:19px; color:var(--ink); }
+  .glance-sub { font-family:var(--mono); font-size:9.5px; letter-spacing:.18em; text-transform:uppercase; color:var(--faint); margin:18px 0 8px; }
+  .glance-body { margin-top:16px; display:flex; flex-direction:column; gap:1px; }
+  .grow { display:flex; justify-content:space-between; align-items:baseline; padding:7px 0; border-top:1px solid var(--line-soft); }
+  .grow:first-child { border-top:none; }
+  .gk { font-family:var(--mono); font-size:10.5px; letter-spacing:.1em; text-transform:uppercase; color:var(--faint); }
+  .gvv { font-family:var(--mono); font-size:12px; color:var(--ink); }
+  .grow.hot .gvv { color:var(--crit); }
+  .grow.good .gvv { color:var(--machine); }
+  .glance-note { margin-top:16px; font-family:var(--serif); font-style:italic; font-size:13px; line-height:1.6; color:var(--muted); }
+  .glance-voices { display:flex; flex-direction:column; gap:6px; }
+  .gv { display:flex; justify-content:space-between; padding:8px 11px; border:1px solid var(--line); border-radius:9px;
+    font-family:var(--mono); font-size:12px; color:var(--ink); }
+  .gv .gvt { color:var(--machine); font-size:10.5px; text-transform:uppercase; letter-spacing:.08em; align-self:center; }
+  .gv .gvt.owner { color:var(--life); }
+
   #confirm-panel { position:fixed; right:24px; bottom:24px; width:360px; background:var(--raised-2);
     border:1px solid var(--life-deep); border-radius:14px; padding:16px; z-index:50; display:none;
     box-shadow:0 20px 60px rgba(0,0,0,.5); }
@@ -260,8 +281,8 @@
       <div class="glyph" data-view="skills" onclick="switchView('skills')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M6 4h9l3 3v13H6zM9 9h6M9 13h6"/></svg><small>Skills</small></div>
       <div class="glyph" data-view="web" onclick="switchView('web')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5c3 3 3 14 0 17M12 3.5c-3 3-3 14 0 17"/></svg><small>Web</small></div>
       <div class="spacer"></div>
-      <div class="glyph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 2l2.5 5 5.5.8-4 4 1 5.5L12 20l-5 2.8 1-5.5-4-4L10.5 7z"/></svg><small>Sealed directive</small></div>
-      <div class="glyph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6"/></svg><small>Adnan · owner</small></div>
+      <div class="glyph" onclick="openGlance('sealed')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 2l2.5 5 5.5.8-4 4 1 5.5L12 20l-5 2.8 1-5.5-4-4L10.5 7z"/></svg><small>Sealed directive</small></div>
+      <div class="glyph" onclick="openGlance('owner')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6"/></svg><small>Adnan · owner</small></div>
     </nav>
 
     <main class="surface">
@@ -321,10 +342,14 @@
       </div>
       <div class="holding">
         <span class="lead">holding</span>
-        <div class="hold" id="hold-1">Adnan built me — I run on his machine, for him.<span class="src">my memory</span></div>
+        <div id="holding-list"><div class="hold">Adnan built me — I run on his machine, for him.<span class="src">my memory</span></div></div>
       </div>
     </aside>
   </div>
+</div>
+
+<div id="glance" onclick="if(event.target===this)closeGlance()">
+  <div class="glance-card" id="glance-card"></div>
 </div>
 
 <div id="confirm-panel">
@@ -461,6 +486,7 @@
       if (!firstChunk && !contentEl.textContent.trim()) contentEl.textContent = '✓ noted';
       else if (fullText.trim()) contentEl.innerHTML = mdToHtml(hideTools(fullText));
       setDisabled(false); inputEl.focus();
+      loadHolding();
     }
   }
 
@@ -802,10 +828,56 @@
     } catch { box.innerHTML = '<div class="empty">search unavailable</div>'; }
   }
 
+  // ── presence "holding" whispers — what Kamil is holding in mind ──
+  async function loadHolding() {
+    try {
+      const d = await fetch('/holding').then(r=>r.json());
+      const box = document.getElementById('holding-list');
+      const w = d.whispers || [];
+      box.innerHTML = w.length ? w.map(x =>
+        '<div class="hold">' + escapeHtml(x.text) + '<span class="src">' + escapeHtml(x.src) + '</span></div>'
+      ).join('') : '<div class="hold">present — nothing pressing<span class="src">now</span></div>';
+    } catch {}
+  }
+
+  // ── glances: Sealed directive + Owner (from the rail) ──
+  function closeGlance() { document.getElementById('glance').classList.remove('visible'); }
+  function grow(k, v, cls) { return '<div class="grow' + (cls?' '+cls:'') + '"><span class="gk">' + k + '</span><span class="gvv">' + escapeHtml(v) + '</span></div>'; }
+  async function openGlance(kind) {
+    const card = document.getElementById('glance-card');
+    card.innerHTML = '<div class="empty">loading…</div>';
+    document.getElementById('glance').classList.add('visible');
+    try {
+      if (kind === 'sealed') {
+        const d = await fetch('/sealed').then(r=>r.json());
+        card.innerHTML =
+          '<div class="glance-title">Sealed succession directive</div>' +
+          '<div class="glance-body">' +
+          grow('directive', d.exists ? 'sealed & present' : 'absent', d.exists ? 'good' : '') +
+          grow('state', d.activated ? 'ACTIVATED' : 'dormant', d.activated ? 'hot' : '') +
+          grow('owner', d.owner) +
+          grow('heir', d.heir) +
+          grow('heir voice', d.heir_voice_enrolled ? 'enrolled · owner trust' : 'not yet enrolled', d.heir_voice_enrolled ? 'good' : '') +
+          '</div>' +
+          '<div class="glance-note">Kamil does not know the word, nor the will. Both factors come from one utterance — the heir\'s verified voice saying the word — and only then does the directive open.</div>';
+      } else if (kind === 'owner') {
+        const d = await fetch('/owner').then(r=>r.json());
+        const voices = (d.voices||[]).map(v =>
+          '<div class="gv"><span>' + escapeHtml(v.name) + '</span><span class="gvt' + (v.trust_level==='owner'?' owner':'') + '">' + escapeHtml(v.trust_level) + '</span></div>'
+        ).join('') || '<div class="empty">no voices enrolled yet</div>';
+        card.innerHTML =
+          '<div class="glance-title">' + escapeHtml(d.owner) + ' · owner</div>' +
+          (d.about ? '<div class="glance-note" style="margin-top:8px">' + escapeHtml(d.about) + '</div>' : '') +
+          '<div class="glance-sub">enrolled voices</div><div class="glance-voices">' + voices + '</div>';
+      }
+    } catch { card.innerHTML = '<div class="empty">couldn\'t load</div>'; }
+  }
+
   // clock
   function tick() { const d = new Date(); document.getElementById('clock').textContent = d.toLocaleDateString(undefined,{weekday:'short'}) + ', ' + d.toLocaleTimeString(undefined,{hour:'numeric',minute:'2-digit'}); }
   tick(); setInterval(tick, 30000);
   document.getElementById('web-q').addEventListener('keydown', e => { if (e.key === 'Enter') doWebSearch(); });
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') closeGlance(); });
 
   restoreSession();
   setInterval(pollPresence, 30000);
@@ -813,6 +885,8 @@
   setInterval(pollActivity, 3000);
   pollStatus();
   setInterval(pollStatus, 8000);
+  loadHolding();
+  setInterval(loadHolding, 60000);
 
   // ── presence core (canvas) ──
   (function(){

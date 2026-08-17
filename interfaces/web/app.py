@@ -257,6 +257,54 @@ async def memory_view():
     from core import self_memory
     return {"content": self_memory.load_memory()}
 
+def _memory_notes() -> list[str]:
+    from core import self_memory
+    return [l.strip()[2:].strip() for l in self_memory.load_memory().splitlines()
+            if l.strip().startswith("- ") and len(l.strip()) > 4]
+
+@app.get("/holding")
+async def holding_view():
+    """What Kamil is holding in mind right now: the active thread's focus and a
+    note from his own memory. Feeds the presence column's whispers."""
+    import random
+    whispers = []
+    try:
+        from memory.thread_state import load_thread_state
+        ts = load_thread_state()
+        if ts and getattr(ts, "is_active", False) and ts.message_count:
+            focus = (ts.current_focus or ts.root_issue or "").strip()
+            if focus:
+                whispers.append({"text": focus, "src": "this thread"})
+    except Exception:
+        pass
+    notes = _memory_notes()
+    if notes:
+        whispers.append({"text": random.choice(notes), "src": "my memory"})
+    return {"whispers": whispers}
+
+@app.get("/sealed")
+async def sealed_view():
+    """Sealed succession directive — status only. Never the word, never the will."""
+    from core import succession
+    heir_enrolled = any(
+        s.get("name") == succession.HEIR_NAME and s.get("trust_level") == "owner"
+        for s in list_speakers()
+    )
+    return {
+        "exists": succession.seal_exists(),
+        "activated": succession.is_activated(),
+        "owner": succession.CREATOR_NAME,
+        "heir": succession.HEIR_NAME,
+        "heir_voice_enrolled": heir_enrolled,
+    }
+
+@app.get("/owner")
+async def owner_view():
+    """A glance at who Kamil belongs to: the owner, enrolled voices, one note."""
+    from core import succession
+    about = next((n for n in _memory_notes() if "adnan" in n.lower()), "")
+    return {"owner": succession.CREATOR_NAME, "voices": list_speakers(), "about": about}
+
 @app.get("/skills")
 async def skills_view():
     """The skill library: domains (folders) + the docs Kamil has learned."""
