@@ -251,6 +251,39 @@ async def status():
         "project": getattr(indexer, "current_project", None),
     }
 
+@app.get("/memory")
+async def memory_view():
+    """Kamil's self-authored memory.md — the notes he keeps about his world."""
+    from core import self_memory
+    return {"content": self_memory.load_memory()}
+
+@app.get("/skills")
+async def skills_view():
+    """The skill library: domains (folders) + the docs Kamil has learned."""
+    from context.domain_indexer import DOMAIN_BOOKS_DIR
+    domains = []
+    if os.path.isdir(DOMAIN_BOOKS_DIR):
+        for d in sorted(os.listdir(DOMAIN_BOOKS_DIR)):
+            dp = os.path.join(DOMAIN_BOOKS_DIR, d)
+            if os.path.isdir(dp):
+                files = [f for f in sorted(os.listdir(dp)) if os.path.isfile(os.path.join(dp, f))]
+                domains.append({"domain": d, "files": files})
+    total = 0
+    try:
+        from context.embedder import get_chroma_client
+        total = get_chroma_client().get_collection("kamil_domain").count()
+    except Exception:
+        pass
+    return {"domains": domains, "total_chunks": total}
+
+@app.get("/web")
+async def web_search_view(q: str = ""):
+    """A web search from the UI. Only the query leaves the machine."""
+    from actions.web import search_web
+    if not q.strip():
+        return {"results": []}
+    return {"results": search_web(q, 6), "query": q}
+
 @app.get("/activity")
 async def activity_poll():
     """Background work Kamil is doing right now (indexing, scans, model loads,

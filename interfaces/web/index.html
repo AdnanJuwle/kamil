@@ -71,8 +71,47 @@
 
   /* work surface */
   .surface { display:flex; flex-direction:column; min-height:0; }
+  .viewport { flex:1; min-height:0; display:flex; }
+  .view { display:none; min-height:0; flex:1; }
+  .view.active { display:flex; flex-direction:column; }
   #messages { flex:1; overflow-y:auto; padding:24px 40px 8px; }
-  #messages::-webkit-scrollbar { width:9px; } #messages::-webkit-scrollbar-thumb { background:var(--line); border-radius:9px; }
+  #messages::-webkit-scrollbar, .panel::-webkit-scrollbar { width:9px; }
+  #messages::-webkit-scrollbar-thumb, .panel::-webkit-scrollbar-thumb { background:var(--line); border-radius:9px; }
+  .panel { flex:1; overflow-y:auto; padding:26px 40px 40px; max-width:900px; }
+  .panel-head { font-family:var(--serif); font-size:21px; color:var(--ink); display:flex; align-items:baseline; gap:12px; }
+  .ph-sub { font-family:var(--mono); font-size:10.5px; letter-spacing:.04em; color:var(--faint); text-transform:none; }
+  .cards { display:flex; flex-direction:column; gap:9px; margin-top:16px; }
+  .pcard { display:flex; align-items:center; gap:12px; padding:12px 15px; border:1px solid var(--line); border-radius:11px;
+    background:var(--raised); cursor:pointer; transition:.15s; }
+  .pcard:hover { border-color:var(--life-deep); background:var(--raised-2); }
+  .pcard.current { border-color:rgba(90,168,150,.4); }
+  .pcard .pc-dot { width:7px; height:7px; border-radius:2px; background:var(--faint); flex:none; }
+  .pcard.current .pc-dot { background:var(--machine); box-shadow:0 0 6px var(--machine); }
+  .pcard .pc-name { font-family:var(--mono); font-size:13px; color:var(--ink); }
+  .pcard .pc-tag { margin-left:auto; font-family:var(--mono); font-size:10px; color:var(--faint); }
+  .pcard.current .pc-tag { color:var(--machine); }
+  .worklog { margin-top:14px; display:flex; flex-direction:column; gap:6px; }
+  .worklog .wl { font-family:var(--mono); font-size:11.5px; color:var(--muted); display:flex; gap:9px; }
+  .worklog .wl .wk { color:var(--faint); } .worklog .wl.live .wk { color:var(--machine); }
+  .worklog .empty, .cards .empty, #web-results .empty { font-family:var(--serif); font-style:italic; color:var(--faint); margin-top:12px; }
+  .doc { margin-top:18px; font-family:var(--serif); font-size:15px; line-height:1.7; color:#DCD3C4; max-width:70ch; }
+  .doc .md-code, .doc .md-inline { font-family:var(--mono); }
+  .ghost-btn { margin-top:16px; background:var(--raised-2); border:1px solid var(--line); color:var(--muted);
+    border-radius:9px; padding:9px 15px; font-family:var(--mono); font-size:11.5px; cursor:pointer; transition:.15s; }
+  .ghost-btn:hover { color:var(--ink); border-color:var(--life-deep); }
+  .skcard { padding:12px 15px; border:1px solid var(--line); border-radius:11px; background:var(--raised); }
+  .skcard .sk-name { font-family:var(--mono); font-size:13px; color:var(--machine); }
+  .skcard .sk-files { font-family:var(--mono); font-size:11px; color:var(--muted); margin-top:6px; line-height:1.6; }
+  .web-search { display:flex; gap:9px; margin-top:16px; }
+  .web-search input { flex:1; background:var(--raised-2); border:1px solid var(--line); border-radius:9px; padding:10px 13px;
+    color:var(--ink); font-family:var(--sans); font-size:14px; outline:none; }
+  .web-search input:focus { border-color:var(--life-deep); }
+  .web-search .ghost-btn { margin-top:0; }
+  #web-results { margin-top:18px; display:flex; flex-direction:column; gap:16px; }
+  .wresult .wr-title { font-family:var(--sans); font-size:14.5px; color:var(--life); text-decoration:none; }
+  .wresult .wr-title:hover { text-decoration:underline; }
+  .wresult .wr-url { font-family:var(--mono); font-size:10.5px; color:var(--machine); margin:3px 0; overflow-wrap:anywhere; }
+  .wresult .wr-snip { font-size:13px; color:var(--muted); }
   .turn { display:grid; grid-template-columns:78px 1fr; gap:0 22px; padding:15px 0; border-top:1px solid var(--line-soft); }
   .turn:first-child { border-top:none; }
   .who { font-family:var(--mono); font-size:11px; letter-spacing:.12em; text-transform:uppercase; padding-top:3px; }
@@ -214,19 +253,49 @@
 
   <div class="body">
     <nav class="rail">
-      <div class="glyph on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="3.2"/><circle cx="12" cy="12" r="8.5" opacity=".5"/></svg><small>Now</small></div>
-      <div class="glyph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 6h16M4 12h11M4 18h7"/></svg><small>Talk</small></div>
-      <div class="glyph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M8 6l-4 6 4 6M16 6l4 6-4 6"/></svg><small>Work</small></div>
-      <div class="glyph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 3v18M4 8c4-3 12-3 16 0M4 16c4 3 12 3 16 0"/></svg><small>Memory</small></div>
-      <div class="glyph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M6 4h9l3 3v13H6zM9 9h6M9 13h6"/></svg><small>Skills</small></div>
-      <div class="glyph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5c3 3 3 14 0 17M12 3.5c-3 3-3 14 0 17"/></svg><small>Web</small></div>
+      <div class="glyph on" data-view="now" onclick="switchView('now')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="3.2"/><circle cx="12" cy="12" r="8.5" opacity=".5"/></svg><small>Now</small></div>
+      <div class="glyph" onclick="switchView('now'); toggleMic()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 3a3 3 0 0 1 3 3v6a3 3 0 0 1-6 0V6a3 3 0 0 1 3-3zM6 11a6 6 0 0 0 12 0M12 17v4"/></svg><small>Talk (voice)</small></div>
+      <div class="glyph" data-view="work" onclick="switchView('work')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M8 6l-4 6 4 6M16 6l4 6-4 6"/></svg><small>Work</small></div>
+      <div class="glyph" data-view="memory" onclick="switchView('memory')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 3v18M4 8c4-3 12-3 16 0M4 16c4 3 12 3 16 0"/></svg><small>Memory</small></div>
+      <div class="glyph" data-view="skills" onclick="switchView('skills')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M6 4h9l3 3v13H6zM9 9h6M9 13h6"/></svg><small>Skills</small></div>
+      <div class="glyph" data-view="web" onclick="switchView('web')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5c3 3 3 14 0 17M12 3.5c-3 3-3 14 0 17"/></svg><small>Web</small></div>
       <div class="spacer"></div>
       <div class="glyph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 2l2.5 5 5.5.8-4 4 1 5.5L12 20l-5 2.8 1-5.5-4-4L10.5 7z"/></svg><small>Sealed directive</small></div>
       <div class="glyph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6"/></svg><small>Adnan · owner</small></div>
     </nav>
 
     <main class="surface">
-      <div id="messages"></div>
+      <div class="viewport">
+        <section class="view active" id="view-now"><div id="messages"></div></section>
+        <section class="view" id="view-work">
+          <div class="panel">
+            <div class="panel-head">Work <span class="ph-sub">projects Kamil can open</span></div>
+            <div id="work-projects" class="cards"></div>
+            <div class="panel-head" style="margin-top:22px">Recent background work</div>
+            <div id="work-activity" class="worklog"></div>
+          </div>
+        </section>
+        <section class="view" id="view-memory">
+          <div class="panel">
+            <div class="panel-head">Memory <span class="ph-sub">Kamil writes this himself · memory.md</span></div>
+            <div id="memory-body" class="doc"></div>
+          </div>
+        </section>
+        <section class="view" id="view-skills">
+          <div class="panel">
+            <div class="panel-head">Skills <span class="ph-sub" id="skills-sub">the library Kamil can draw on</span></div>
+            <button class="ghost-btn" onclick="teachDoc()">＋ teach Kamil a document</button>
+            <div id="skills-body" class="cards"></div>
+          </div>
+        </section>
+        <section class="view" id="view-web">
+          <div class="panel">
+            <div class="panel-head">Web <span class="ph-sub">only your query leaves the machine</span></div>
+            <div class="web-search"><input id="web-q" placeholder="search the web…" /><button class="ghost-btn" onclick="doWebSearch()">search</button></div>
+            <div id="web-results"></div>
+          </div>
+        </section>
+      </div>
       <div class="composer">
         <div class="comptools">
           <button class="comptool" id="mic-btn" onclick="toggleMic()">◎ mic</button>
@@ -661,9 +730,82 @@
     }
   }
 
+  // ── view switching (the facets) ──
+  function switchView(name) {
+    document.querySelectorAll('.view').forEach(v => v.classList.toggle('active', v.id === 'view-' + name));
+    document.querySelectorAll('.rail .glyph[data-view]').forEach(g => g.classList.toggle('on', g.dataset.view === name));
+    if (name === 'work') loadWork();
+    else if (name === 'memory') loadMemory();
+    else if (name === 'skills') loadSkills();
+    else if (name === 'web') document.getElementById('web-q').focus();
+  }
+
+  async function loadWork() {
+    const box = document.getElementById('work-projects');
+    box.innerHTML = '<div class="empty">loading…</div>';
+    try {
+      const [pj, cp] = await Promise.all([fetch('/projects').then(r=>r.json()), fetch('/current_project').then(r=>r.json())]);
+      const cur = cp.project;
+      box.innerHTML = (pj.projects||[]).map(p =>
+        '<div class="pcard' + (p===cur?' current':'') + '" data-proj="' + escapeHtml(p) + '">' +
+        '<span class="pc-dot"></span><span class="pc-name">' + escapeHtml(p) + '</span>' +
+        '<span class="pc-tag">' + (p===cur?'loaded':'open →') + '</span></div>'
+      ).join('') || '<div class="empty">no projects found</div>';
+      box.querySelectorAll('.pcard').forEach(c => c.onclick = () => openProjectUI(c.dataset.proj));
+    } catch { box.innerHTML = '<div class="empty">couldn\'t load projects</div>'; }
+    const log = document.getElementById('work-activity');
+    try {
+      const a = await fetch('/activity').then(r=>r.json());
+      const items = [...(a.active||[]).map(x=>({label:x.label,detail:x.detail,live:true})), ...(a.recent||[])];
+      log.innerHTML = items.length ? items.map(i =>
+        '<div class="wl' + (i.live?' live':'') + '"><span class="wk">' + (i.live?'▸':(i.ok===false?'✗':'✓')) +
+        '</span><span>' + escapeHtml(i.label) + (i.detail?' — ' + escapeHtml(i.detail):'') + '</span></div>'
+      ).join('') : '<div class="empty">nothing lately</div>';
+    } catch {}
+  }
+  function openProjectUI(name) {
+    appendSystem('opening project: ' + name);
+    fetch('/select_project', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({project_name:name})})
+      .then(()=>{ loadWork(); pollStatus(); });
+  }
+
+  async function loadMemory() {
+    const box = document.getElementById('memory-body');
+    box.innerHTML = '<div class="empty">loading…</div>';
+    try { const d = await fetch('/memory').then(r=>r.json());
+      const clean = (d.content||'').replace(/<!--[\s\S]*?-->/g, '').trim();
+      box.innerHTML = clean ? mdToHtml(clean) : '<div class="empty">memory is empty — Kamil hasn\'t written anything yet</div>';
+    } catch { box.innerHTML = '<div class="empty">couldn\'t load memory</div>'; }
+  }
+
+  async function loadSkills() {
+    const box = document.getElementById('skills-body');
+    box.innerHTML = '<div class="empty">loading…</div>';
+    try { const d = await fetch('/skills').then(r=>r.json());
+      document.getElementById('skills-sub').textContent = (d.total_chunks||0) + ' chunks · ' + (d.domains||[]).length + ' domains';
+      box.innerHTML = (d.domains||[]).length ? d.domains.map(dm =>
+        '<div class="skcard"><div class="sk-name">' + escapeHtml(dm.domain) + '</div><div class="sk-files">' +
+        (dm.files.length ? dm.files.map(escapeHtml).join('<br>') : '—') + '</div></div>'
+      ).join('') : '<div class="empty">no skills yet — teach Kamil a document</div>';
+    } catch { box.innerHTML = '<div class="empty">couldn\'t load skills</div>'; }
+  }
+
+  async function doWebSearch() {
+    const q = document.getElementById('web-q').value.trim(); if (!q) return;
+    const box = document.getElementById('web-results');
+    box.innerHTML = '<div class="empty">searching…</div>';
+    try { const d = await fetch('/web?q=' + encodeURIComponent(q)).then(r=>r.json());
+      box.innerHTML = (d.results||[]).length ? d.results.map(r =>
+        '<div class="wresult"><a class="wr-title" href="' + escapeHtml(r.url) + '" target="_blank" rel="noopener">' + escapeHtml(r.title||r.url) + '</a>' +
+        '<div class="wr-url">' + escapeHtml(r.url) + '</div><div class="wr-snip">' + escapeHtml(r.snippet||'') + '</div></div>'
+      ).join('') : '<div class="empty">no results</div>';
+    } catch { box.innerHTML = '<div class="empty">search unavailable</div>'; }
+  }
+
   // clock
   function tick() { const d = new Date(); document.getElementById('clock').textContent = d.toLocaleDateString(undefined,{weekday:'short'}) + ', ' + d.toLocaleTimeString(undefined,{hour:'numeric',minute:'2-digit'}); }
   tick(); setInterval(tick, 30000);
+  document.getElementById('web-q').addEventListener('keydown', e => { if (e.key === 'Enter') doWebSearch(); });
 
   restoreSession();
   setInterval(pollPresence, 30000);
