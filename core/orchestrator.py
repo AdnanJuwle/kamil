@@ -430,17 +430,23 @@ class Orchestrator:
         save_history(self.history)
         return response
 
-    def chat_agent(self, user_message: str, max_iters: int = 6) -> Generator[dict, None, None]:
+    def chat_agent(self, user_message: str, max_iters: int = 6, voice: bool = False) -> Generator[dict, None, None]:
         """
         Agentic tool-use loop: the model can call tools, see their results, and
         continue across multiple steps until the task is done. Yields structured
         events (see actions/agent.py). Mutating tools pause for confirmation.
+        `voice=True` tells it the final answer will be spoken aloud, so keep it short.
         """
         from actions.agent import iter_agent
         from actions.tools import get_tools_for_prompt
 
         self._maybe_compress()
         messages = self._build_messages(user_message)
+        if voice:
+            messages[0]["content"] += ("\n\n## SPOKEN ANSWER\nThis is a voice call. Do the work with "
+                                       "tools, then give your FINAL answer in at most 2-3 short spoken "
+                                       "sentences — no markdown, no lists, no code blocks. Summarise what "
+                                       "you found or did; offer to show details on screen if it's long.")
         messages[0]["content"] += (
             "\n\n## AGENT MODE\nYou can use tools across multiple steps. Available tools:\n"
             + get_tools_for_prompt()

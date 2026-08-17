@@ -776,6 +776,60 @@ def _build_voice_messages(content: str) -> list[dict]:
     return [{"role": "system", "content": voice_system},
             {"role": "user", "content": content}]
 
+@app.post("/voice_agent_stream")
+async def voice_agent_stream(message: Message):
+    """Voice call in AGENT mode: run the tool-using agent on the spoken request
+    (read files, web search, run code), speak short status while it works, then
+    speak a concise result. This is the default call mode — most calls are real
+    requests, not chit-chat."""
+    import asyncio
+    async def gen():
+        loop = asyncio.get_event_loop()
+        q: asyncio.Queue = asyncio.Queue()
+        def worker():
+            try:
+                for ev in kamil.chat_agent(message.content, voice=True):
+                    loop.call_soon_threadsafe(q.put_nowait, ev)
+            except Exception as e:
+                loop.call_soon_threadsafe(q.put_nowait, {"type": "error", "error": str(e)})
+            loop.call_soon_threadsafe(q.put_nowait, None)
+        loop.run_in_executor(None, worker)
+
+        final_text = ""
+        spoke_filler = False
+        try:
+            while True:
+                ev = await q.get()
+                if ev is None:
+                    break
+                t = ev.get("type")
+                if t in ("tool_call", "status") and not spoke_filler:
+                    spoke_filler = True
+                    yield f"data: {json.dumps({'type': 'status', 'text': 'working on it'})}\n\n"
+                elif t in ("text", "done", "max_iterations") and ev.get("text"):
+                    final_text = ev["text"]
+                elif t == "awaiting_confirmation":
+                    final_text = "That one needs your approval on screen before I can do it."
+                elif t == "error":
+                    final_text = "Sorry, I ran into an error on that."
+            if not final_text:
+                final_text = "I couldn't complete that."
+            print(f"Voice (agent): {final_text[:100]}")
+            yield f"data: {json.dumps({'type': 'text', 'text': final_text})}\n\n"
+            spoken = clean_for_tts(final_text)
+            if spoken.strip():
+                tts = get_tts(); seq = 0
+                async for samples, sr in tts.create_stream(spoken, voice=KAMIL_VOICE, speed=1.1, lang="en-us"):
+                    buf = io.BytesIO(); sf.write(buf, samples, sr, format="WAV"); buf.seek(0)
+                    yield f"data: {json.dumps({'type': 'audio', 'seq': seq, 'audio': base64.b64encode(buf.read()).decode()})}\n\n"
+                    seq += 1
+            yield f"data: {json.dumps({'type': 'done'})}\n\n"
+            yield "data: [DONE]\n\n"
+        except Exception as e:
+            import traceback; traceback.print_exc()
+            yield f"data: {json.dumps({'type': 'error', 'error': str(e)})}\n\n"
+    return StreamingResponse(gen(), media_type="text/event-stream")
+
 @app.post("/voice_chat_stream")
 async def voice_chat_stream(message: Message):
     """Voice reply as an SSE stream: the text first, then Kokoro audio chunk by
