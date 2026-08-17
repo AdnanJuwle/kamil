@@ -147,8 +147,13 @@ class Orchestrator:
             "in write_file's content (no ``` fences, real newlines). Do NOT also print the code "
             "outside the tool call — it wastes the output budget and can cut the call off. Emit the "
             "```tool block directly.\n"
-            "Don't run GUI apps or blocking programs with shell (they hang) — verify with a "
-            "py_compile shell command, then tell the user how to run it.\n"
+            "Use the FULL absolute path inside the project directory when writing files "
+            "(e.g. the Project directory shown below), not a bare relative name.\n"
+            "AFTER writing a file: verify it with EXACTLY `python -m py_compile <full_path>` "
+            "(that catches syntax errors). Then you are DONE — report the path and how to run it. "
+            "NEVER run the file itself with shell: GUI apps (tkinter/PyQt) and servers BLOCK/hang "
+            "with no display, so running them only fails and burns turns. If a run fails, do NOT "
+            "retry it — py_compile instead and stop. Do not loop on shell failures.\n"
             "CURRENT INFO: your training stops at 2023, so for ANY recent/news/price/'latest' "
             "question your FIRST action is web_search, then answer from what you found. Use it."
         )
@@ -750,15 +755,33 @@ class Orchestrator:
         return result
 
     def resolve_project(self, text: str) -> str | None:
-        """The known project explicitly named in `text`, if any (longest match wins
-        so 'kamil_v2' beats 'kamil'). Returns None when nothing is named."""
+        """The known project named in `text`, if any. Fuzzy: hyphens/underscores and
+        spaces are interchangeable, so 'ai medical diagnosis' matches the project
+        'AI-Medical-Diagnosis-System'. Longest exact match wins first; else a project
+        whose distinctive words nearly all appear in the message."""
+        import re
         if not self.indexer:
             return None
-        tl = (text or "").lower()
-        for p in sorted(self.indexer.list_projects(), key=len, reverse=True):
-            if p.lower() in tl:
+        def norm(s):
+            return re.sub(r"\s+", " ", re.sub(r"[-_]+", " ", (s or "").lower())).strip()
+        nt = " " + norm(text) + " "
+        projects = self.indexer.list_projects()
+        # 1) normalized project name appears verbatim in the message
+        for p in sorted(projects, key=len, reverse=True):
+            if " " + norm(p) + " " in nt or norm(p) in nt:
                 return p
-        return None
+        # 2) fuzzy: >=2 distinctive project words present, >=75% of them
+        _filler = {"system", "app", "demo", "project", "the", "and", "for", "ai"}
+        best, best_score = None, 0.0
+        for p in projects:
+            toks = [t for t in norm(p).split() if len(t) > 2 and t not in _filler]
+            if len(toks) < 2:
+                continue
+            hits = sum(1 for t in toks if f" {t} " in nt or f" {t}s " in nt)
+            score = hits / len(toks)
+            if hits >= 2 and score >= 0.75 and score > best_score:
+                best, best_score = p, score
+        return best
 
     def open_project(self, project_name: str) -> bool:
         """Load a project into context: scan it, make it current, wire the prompt

@@ -81,6 +81,16 @@ def _command_allowed(command: str) -> tuple[bool, str]:
     return True, ""
 
 
+def _is_script_launch(command: str) -> bool:
+    """A bare `python file.py` style launch — which hangs the agent on GUI apps or
+    servers (no display). py_compile / pytest / -c / --version are fine."""
+    import re as _re
+    low = command.strip().lower()
+    if not (_re.match(r'^(py|python|python3)\b', low) and _re.search(r'\.py(\s|"|$)', low)):
+        return False
+    return not _re.search(r'(-m\s+py_compile|py_compile|-m\s+pytest|pytest|-c\s|--version|-m\s+pip)', low)
+
+
 @dataclass
 class ToolParam:
     name: str
@@ -239,6 +249,11 @@ def _shell(params: dict) -> ToolResult:
     allowed, reason = _command_allowed(command)
     if not allowed:
         return ToolResult(success=False, error=f"refused: {reason}", tool="shell", params=params)
+    if _is_script_launch(command):
+        return ToolResult(success=False, tool="shell", params=params,
+                          error=("won't run a script directly — GUI apps and servers block with no "
+                                 "display and hang. Verify it with `python -m py_compile <path>` instead, "
+                                 "then tell the user how to run it themselves. You're done once it compiles."))
     try:
         result = subprocess.run(
             command,
