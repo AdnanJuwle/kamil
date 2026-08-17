@@ -258,6 +258,15 @@ class Orchestrator:
 
         save_history(self.history)
 
+        # Kamil curates its own memory.md in the background — notices durable facts
+        # and saves them without being asked (throttled, deduped, non-blocking).
+        try:
+            from core import memory_reflect
+            memory_reflect.maybe_reflect(
+                self.history, lambda m: self.client.chat(m, max_tokens=300, temperature=0.2))
+        except Exception as _e:
+            print(f"[memory] reflect hook error: {_e}")
+
     def _apply_memory_ops(self, text: str) -> str:
         """Execute any remember/update_memory tool calls Kamil put in its reply,
         and strip those blocks from what gets shown/saved. Lets Kamil curate its
@@ -595,6 +604,12 @@ class Orchestrator:
             self.ctx.add_message({"role": "user", "content": user_message})
             self.ctx.add_message({"role": "assistant", "content": final_text})
             save_history(self.history)
+            try:
+                from core import memory_reflect
+                memory_reflect.maybe_reflect(
+                    self.history, lambda m: self.client.chat(m, max_tokens=300, temperature=0.2))
+            except Exception as _e:
+                print(f"[memory] reflect hook error: {_e}")
 
     def resume_agent(self, transcript: list[dict], executed: list, user_message: str = "",
                      max_iters: int = 6) -> Generator[dict, None, None]:
