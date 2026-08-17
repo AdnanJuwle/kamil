@@ -125,6 +125,69 @@ class Orchestrator:
                 messages[0]["content"] = sys[: len(sys) - over - 200] + "\n…(context trimmed)"
         return messages
 
+    def _agent_tool_instructions(self) -> str:
+        """The tool-use rules shared by both agent tiers."""
+        from actions.tools import get_tools_for_prompt
+        return (
+            "## AGENT MODE\nYou can use tools across multiple steps. Available tools:\n"
+            + get_tools_for_prompt()
+            + "\n\nTo call a tool, output a fenced block exactly like:\n"
+            '```tool\n{"tool": "read_file", "params": {"path": "C:\\\\path\\\\file.py"}}\n```\n'
+            "After each tool runs you will see its result, then call more tools or give your "
+            "final answer with NO tool block. Prefer edit_file over write_file for existing files.\n"
+            "Work autonomously: edit_file/write_file/shell run automatically inside the "
+            "workspace or a project repo (non-destructive) — only actions outside those bounds "
+            "pause. For a coding task: read → edit → run a check → fix → report. Don't ask "
+            "permission for normal in-project edits.\n"
+            "Never guess a tool's result before running it. Don't repeat a call you already made. "
+            "Once a tool gives you what you need, ANSWER from it.\n"
+            "CREATING FILES — CRITICAL: to create/save/write a file you MUST call write_file in a "
+            "```tool block. Printing code in a ```python block does NOT create a file. NEVER claim "
+            "a file is created/stored without a real write_file success result. Put the plain code "
+            "in write_file's content (no ``` fences, real newlines). Do NOT also print the code "
+            "outside the tool call — it wastes the output budget and can cut the call off. Emit the "
+            "```tool block directly.\n"
+            "Don't run GUI apps or blocking programs with shell (they hang) — verify with a "
+            "py_compile shell command, then tell the user how to run it.\n"
+            "CURRENT INFO: your training stops at 2023, so for ANY recent/news/price/'latest' "
+            "question your FIRST action is web_search, then answer from what you found. Use it."
+        )
+
+    def _project_code_context(self, user_message: str) -> str:
+        """Project directory pointer + relevant symbol-indexed code, for the coder."""
+        if not (self.context_enabled and self.indexer and self.indexer.current_project):
+            return ""
+        proj = self.indexer.current_project
+        header = (f"## PROJECT\nCurrent project: {proj}\n"
+                  f"Project directory: C:\\Users\\adnan\\Documents\\repos\\{proj}\n"
+                  "Create or edit files inside this directory unless told otherwise.")
+        try:
+            from context.symbol_indexer import get_symbol_index
+            root = self.indexer._get_project_root(proj)
+            if root:
+                sym = get_symbol_index(proj, root)
+                if not sym.is_indexed():
+                    sym.index()
+                ctx = sym.build_context_for_query(user_message, max_tokens=5000)
+                if ctx:
+                    return header + "\n\n## CODE CONTEXT\n" + ctx
+        except Exception as e:
+            print(f"[orchestrator] code context error: {e}")
+        return header
+
+    def _coding_agent_messages(self, user_message: str, tool_instr: str) -> list[dict]:
+        """A clean, persona-free prompt for the aligned coding model."""
+        system = ("You are an expert software engineer and coding agent working inside Adnan's "
+                  "local project workspace on his own machine. Complete his coding request "
+                  "precisely and practically: write correct, complete, runnable code and use your "
+                  "tools to do it. Keep prose brief.\n\n" + tool_instr)
+        ctx = self._project_code_context(user_message)
+        if ctx:
+            system += "\n\n" + ctx
+        recent = [m for m in getattr(self.ctx, "ram", [])[-6:]
+                  if isinstance(m, dict) and m.get("role") in ("user", "assistant") and m.get("content")]
+        return [{"role": "system", "content": system}] + recent + [{"role": "user", "content": user_message}]
+
     def _looks_like_coding(self, message: str) -> bool:
         """Does this task actually need the big coding model? (vs. a web lookup or
         file read the 8B can drive.)"""
@@ -473,65 +536,15 @@ class Orchestrator:
         `voice=True` tells it the final answer will be spoken aloud, so keep it short.
         """
         from actions.agent import iter_agent
-        from actions.tools import get_tools_for_prompt
 
         self._maybe_compress()
-        messages = self._build_messages(user_message)
-        if voice:
-            messages[0]["content"] += ("\n\n## SPOKEN ANSWER\nThis is a voice call. Do the work with "
-                                       "tools, then give your FINAL answer in at most 2-3 short spoken "
-                                       "sentences — no markdown, no lists, no code blocks. Summarise what "
-                                       "you found or did; offer to show details on screen if it's long.")
-        messages[0]["content"] += (
-            "\n\n## AGENT MODE\nYou can use tools across multiple steps. Available tools:\n"
-            + get_tools_for_prompt()
-            + "\n\nTo call a tool, output a fenced block exactly like:\n"
-            '```tool\n{"tool": "read_file", "params": {"path": "C:\\\\path\\\\file.py"}}\n```\n'
-            "After each tool runs you will see its result, then call more tools or give "
-            "your final answer with NO tool block when finished. Prefer edit_file over "
-            "write_file for changing existing files.\n"
-            "You can work autonomously: edit_file/write_file/shell run automatically when "
-            "they're inside the workspace or a project repo (and the shell command isn't "
-            "destructive) — only actions outside those bounds pause for the user. So for a "
-            "coding task, flow through it: read the file → edit it → run the test/command "
-            "to verify → fix if it fails → report. Don't stop to ask permission for normal "
-            "in-project edits.\n"
-            "Rules: never write out or guess a tool's result before you run it — call "
-            "the tool and use the REAL result. Don't repeat a tool call you already "
-            "made. Once a tool gives you what you need, ANSWER from it directly — never "
-            "say 'we need to look at the file' after you've already read it.\n"
-            "CREATING FILES — CRITICAL: to create, save, write, or 'store' a file you MUST "
-            "call the write_file tool in a ```tool block. Printing the code in a ```python "
-            "block does NOT create a file — it does nothing. NEVER say a file is created or "
-            "stored unless you actually called write_file and saw its success result. When "
-            "asked to create/make a file, your response is the ```tool write_file call — put "
-            "the plain code in its content field (no ``` fences, real newlines), then confirm "
-            "from the result. Build what the user asked for.\n"
-            "Do NOT print the code anywhere except inside the write_file tool call — writing "
-            "it once in prose and again in the tool call wastes your output budget and can "
-            "cut the tool call off. Emit the ```tool block directly, no code before it.\n"
-            "Don't run GUI apps or long-running/blocking programs with shell (they hang and "
-            "time out) — verify code with a py_compile shell command instead, then tell the "
-            "user how to run it.\n"
-            "CURRENT INFO: your training stops at 2023, so for ANY question about recent "
-            "events, news, people, prices, or 'latest' anything, your FIRST action is "
-            "web_search — then read/answer with what you found. NEVER reply 'I can't "
-            "answer' or 'I'm only trained to 2023'. You have web_search; use it."
-        )
+        tool_instr = self._agent_tool_instructions()
+        voice_note = ("\n\n## SPOKEN ANSWER\nThis is a voice call. Do the work with tools, then "
+                      "give your FINAL answer in at most 2-3 short spoken sentences — no markdown, "
+                      "no lists, no code. Summarise what you did; offer details on screen if long.")
 
-        # Hard cap on prompt size so the agent can never overflow the model's
-        # context and 400 — trim the OLDEST history turns (keep system + newest),
-        # leaving room for tool results + generation within a 32k window.
-        messages = self._cap_prompt(messages, max_chars=int(os.getenv("KAMIL_AGENT_PROMPT_CHARS", "88000")))
-
-        # A tool call carrying a whole file needs room — the default 1024-token cap
-        # truncated the write_file JSON mid-way (nothing executed). Give the agent
-        # a big output budget so tool calls complete.
+        # Decide the coding tier FIRST — the aligned coder needs a clean prompt.
         agent_max = int(os.getenv("KAMIL_AGENT_MAX_TOKENS", "6000"))
-
-        # Only spin up the heavy coding model for actual CODING tasks. Web lookups,
-        # file reads, and general questions run the agent on the fast 8B (no ~30s
-        # spin-up), which still calls tools (web_search, read_file, etc.).
         model_fn = lambda msgs: self.client.chat(msgs, max_tokens=agent_max)
         _heavy = None
         if os.getenv("KAMIL_AGENT_HEAVY", "1") == "1" and self._looks_like_coding(user_message):
@@ -546,6 +559,22 @@ class Orchestrator:
                         _heavy = heavy_tier
             except Exception as _e:
                 print(f"[orchestrator] heavy tier unavailable: {_e}")
+
+        if _heavy is not None:
+            # Clean coding-agent prompt. Kamil's 240-line persona system prompt
+            # ("no content policy", political/religious framing, "uncensored") makes
+            # the ALIGNED coder refuse benign tasks. The coder is a tool — give it a
+            # focused coding brief + the project's code + the tools, nothing else.
+            messages = self._coding_agent_messages(user_message, tool_instr + (voice_note if voice else ""))
+        else:
+            # 8B chat model (lexi, uncensored) keeps Kamil's full persona.
+            messages = self._build_messages(user_message)
+            if voice:
+                messages[0]["content"] += voice_note
+            messages[0]["content"] += "\n\n" + tool_instr
+
+        # Hard cap so the prompt can't overflow the window and 400.
+        messages = self._cap_prompt(messages, max_chars=int(os.getenv("KAMIL_AGENT_PROMPT_CHARS", "88000")))
 
         final_text = ""
         terminal = "done"
