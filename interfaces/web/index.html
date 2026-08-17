@@ -120,8 +120,23 @@
   #core { width:208px; height:208px; }
   #p-state { font-family:var(--serif); font-style:italic; font-size:17px; color:var(--ink); margin-top:4px; min-height:26px; }
   #p-mood { font-family:var(--mono); font-size:10px; letter-spacing:.16em; text-transform:uppercase; color:var(--faint); margin-top:8px; }
+  .lead { font-family:var(--mono); font-size:9.5px; letter-spacing:.2em; text-transform:uppercase; color:var(--faint); }
+  .bgwork { margin-top:22px; width:100%; max-width:250px; display:flex; flex-direction:column; gap:9px; text-align:left; }
+  #bg-list { display:flex; flex-direction:column; gap:7px; }
+  .bg-idle { font-family:var(--serif); font-style:italic; font-size:13px; color:var(--faint); }
+  .bg-watch { font-family:var(--mono); font-size:10px; color:var(--faint); letter-spacing:.02em; display:flex; align-items:center; gap:6px; }
+  .bg-watch .eye { width:5px; height:5px; border-radius:50%; background:var(--machine); opacity:.7; }
+  .bg-item { display:grid; grid-template-columns:12px 1fr; gap:9px; align-items:start; padding:7px 9px; border-radius:9px;
+    background:var(--raised-2); border:1px solid var(--line); }
+  .bg-item.live { border-color:rgba(90,168,150,.32); }
+  .bg-item .bdot { width:7px; height:7px; border-radius:50%; margin-top:5px; background:var(--machine);
+    box-shadow:0 0 7px var(--machine); animation:pulse 1.4s ease-in-out infinite; }
+  .bg-item.done .bdot { background:var(--faint); box-shadow:none; animation:none; }
+  .bg-item.fail .bdot { background:var(--crit); box-shadow:none; animation:none; }
+  .bg-item .bl { font-family:var(--mono); font-size:11px; color:var(--ink); letter-spacing:.02em; }
+  .bg-item.done .bl, .bg-item.fail .bl { color:var(--muted); }
+  .bg-item .bd { display:block; font-family:var(--mono); font-size:9.5px; color:var(--faint); margin-top:2px; overflow-wrap:anywhere; }
   .holding { margin-top:auto; padding-top:24px; display:flex; flex-direction:column; gap:15px; max-width:250px; width:100%; }
-  .holding .lead { font-family:var(--mono); font-size:9.5px; letter-spacing:.2em; text-transform:uppercase; color:var(--faint); }
   .hold { font-family:var(--serif); font-style:italic; font-size:14px; line-height:1.5; color:#CFC6B6; }
   .hold .src { display:block; font-family:var(--mono); font-style:normal; font-size:9.5px; letter-spacing:.08em;
     text-transform:uppercase; color:var(--faint); margin-top:5px; }
@@ -149,6 +164,7 @@
 
   @keyframes breathe { 0%,100%{opacity:.5;transform:scale(.85)} 50%{opacity:1;transform:scale(1.15)} }
   @keyframes blink { 50%{opacity:0} }
+  @keyframes pulse { 0%,100%{opacity:.45;transform:scale(.8)} 50%{opacity:1;transform:scale(1.15)} }
   @media (prefers-reduced-motion: reduce){ .pdot,.cursor{animation:none} }
   @media (max-width:1000px){ .body{grid-template-columns:56px 1fr} .presence{display:none} }
 </style>
@@ -207,6 +223,10 @@
       <canvas id="core" width="416" height="416"></canvas>
       <div id="p-state">present</div>
       <div id="p-mood">at rest</div>
+      <div class="bgwork">
+        <span class="lead">background</span>
+        <div id="bg-list"><div class="bg-idle">quiet — nothing running</div></div>
+      </div>
       <div class="holding">
         <span class="lead">holding</span>
         <div class="hold" id="hold-1">Adnan built me — I run on his machine, for him.<span class="src">my memory</span></div>
@@ -555,12 +575,42 @@
     } catch {}
   }
 
+  // Background work Kamil is doing (indexing, scans, model loads, speaker checks).
+  window.__bgActive = 0;
+  async function pollActivity() {
+    let data;
+    try { const res = await fetch('/activity'); if (!res.ok) return; data = await res.json(); }
+    catch { return; }
+    const active = data.active || [], recent = data.recent || [];
+    window.__bgActive = active.length;
+    const list = document.getElementById('bg-list');
+    let html = '';
+    for (const a of active) {
+      html += '<div class="bg-item live"><span class="bdot"></span><div><span class="bl">' +
+        escapeHtml(a.label) + '</span>' + (a.detail ? '<span class="bd">' + escapeHtml(a.detail) + '</span>' : '') + '</div></div>';
+    }
+    for (const r of recent.slice(0, active.length ? 1 : 3)) {
+      html += '<div class="bg-item ' + (r.ok ? 'done' : 'fail') + '"><span class="bdot"></span><div><span class="bl">' +
+        (r.ok ? '' : '✗ ') + escapeHtml(r.label) + '</span>' + (r.detail ? '<span class="bd">' + escapeHtml(r.detail) + '</span>' : '') + '</div></div>';
+    }
+    if (!html) {
+      html = data.watching
+        ? '<div class="bg-watch"><span class="eye"></span>watching ' + escapeHtml(data.project) + ' for changes</div>'
+        : '<div class="bg-idle">quiet — nothing running</div>';
+    }
+    list.innerHTML = html;
+    if (active.length) setPresence('working in the background', '…');
+    else if (!sendBtn.disabled) setPresence('at rest', 'present');
+  }
+
   // clock
   function tick() { const d = new Date(); document.getElementById('clock').textContent = d.toLocaleDateString(undefined,{weekday:'short'}) + ', ' + d.toLocaleTimeString(undefined,{hour:'numeric',minute:'2-digit'}); }
   tick(); setInterval(tick, 30000);
 
   loadProjects().then(restoreSession);
   setInterval(pollPresence, 30000);
+  pollActivity();
+  setInterval(pollActivity, 3000);
 
   // ── presence core (canvas) ──
   (function(){
@@ -571,7 +621,7 @@
     function ring(r,al,w){ctx.beginPath();ctx.arc(cx,cy,r,0,6.2832);ctx.strokeStyle='rgba(232,178,76,'+al+')';ctx.lineWidth=w;ctx.stroke();}
     function frame(t){
       ctx.clearRect(0,0,W,H);
-      const busy = sendBtn.disabled ? 1 : 0;
+      const busy = (sendBtn.disabled || window.__bgActive) ? 1 : 0;
       const b=reduce?0.7:(0.5+0.5*Math.sin(t*(0.0011+busy*0.0009)));
       const g=ctx.createRadialGradient(cx,cy,4,cx,cy,56+b*20);
       g.addColorStop(0,'rgba(232,178,76,'+(0.32+b*0.15)+')');g.addColorStop(.5,'rgba(232,178,76,.07)');g.addColorStop(1,'rgba(232,178,76,0)');

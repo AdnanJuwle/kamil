@@ -191,8 +191,14 @@ class Indexer:
             if not self.current_project:
                 return
             project_path = str(Path(PROJECTS_DIR) / self.current_project).lower()
-            for file_path in changed_files:
-                if file_path.lower().startswith(project_path):
+            mine = [f for f in changed_files if f.lower().startswith(project_path)]
+            if not mine:
+                return
+            from core import activity
+            label = os.path.basename(mine[0].replace("DELETED:", ""))
+            detail = label if len(mine) == 1 else f"{label} +{len(mine) - 1} more"
+            with activity.task("re-indexing edits", detail):
+                for file_path in mine:
                     self.reindex_file(self.current_project, file_path)
         self.watcher = FileWatcher(PROJECTS_DIR, on_change)
         self.watcher.start()

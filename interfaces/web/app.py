@@ -7,6 +7,7 @@ from fastapi import FastAPI, Request, UploadFile, File, Form
 from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel
 from core.orchestrator import Orchestrator
+from core import activity
 from context.indexer import Indexer
 from contextlib import asynccontextmanager
 import json
@@ -225,6 +226,15 @@ async def presence_poll():
         save_history(kamil.history)
     return {"messages": msgs}
 
+@app.get("/activity")
+async def activity_poll():
+    """Background work Kamil is doing right now (indexing, scans, model loads,
+    speaker checks) + what just finished. The presence panel polls this."""
+    snap = activity.snapshot()
+    snap["watching"] = bool(getattr(indexer, "current_project", None))
+    snap["project"] = getattr(indexer, "current_project", None)
+    return snap
+
 @app.post("/learn")
 async def learn(file: UploadFile = File(...), domain: str = Form("general")):
     """Upload a doc -> Kamil ingests it as a skill (immediately queryable)."""
@@ -237,7 +247,8 @@ async def learn(file: UploadFile = File(...), domain: str = Form("general")):
     try:
         with open(dest, "wb") as f:
             shutil.copyfileobj(file.file, f)
-        result = learn_document(dest, domain=safe_domain)
+        with activity.task("indexing skill", f"{os.path.basename(file.filename)} · {safe_domain}"):
+            result = learn_document(dest, domain=safe_domain)
         return result
     except Exception as e:
         import traceback; traceback.print_exc()
@@ -258,12 +269,13 @@ async def get_history():
 @app.post("/select_project")
 async def select_project(data: ProjectSelect):
     # Lightweight scan only — no embedding
-    structure = indexer.scan_project_structure(data.project_name)
-    
+    with activity.task("scanning project", data.project_name):
+        structure = indexer.scan_project_structure(data.project_name)
+
     # Set as current project for context
     indexer.current_project = data.project_name
     kamil.set_project(data.project_name, indexer)
-    
+
     return {
         "status": "ok",
         "project": data.project_name,
@@ -703,7 +715,8 @@ async def transcribe(request: Request):
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
                 audio, sr = librosa.load(tmp_path, sr=16000, mono=True)
-            speaker_result = identify_speaker(audio, sample_rate=16000)
+            with activity.task("verifying speaker"):
+                speaker_result = identify_speaker(audio, sample_rate=16000)
             set_current_speaker(speaker_result)
             print(f"[transcribe] Speaker: {speaker_result.speaker_name} "
                   f"({speaker_result.trust_level}, conf={speaker_result.confidence:.2f})")

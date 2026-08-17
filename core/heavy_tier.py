@@ -85,14 +85,22 @@ def ensure_loaded(timeout: int = 240) -> bool:
         print(f"[heavy] loading {meta['name']} — {prof['note']} (est {prof['est_vram_gb']}GB)")
         _proc = subprocess.Popen([LLAMA_SERVER] + args,
                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    for _ in range(timeout):
-        if _is_running():
-            print("[heavy] ready")
-            _arm_idle()
-            return True
-        time.sleep(1)
-    print("[heavy] failed to become ready in time")
-    return False
+    from core import activity
+    tok = activity.begin("loading coding model", f"{meta['name']} · {prof['note']}")
+    try:
+        for _ in range(timeout):
+            if _is_running():
+                print("[heavy] ready")
+                _arm_idle()
+                activity.end(tok, ok=True, detail=f"{meta['name']} ready")
+                return True
+            time.sleep(1)
+        print("[heavy] failed to become ready in time")
+        activity.end(tok, ok=False, detail="timed out")
+        return False
+    except BaseException:
+        activity.end(tok, ok=False)
+        raise
 
 
 def unload() -> None:
