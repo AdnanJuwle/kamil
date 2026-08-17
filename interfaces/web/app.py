@@ -251,11 +251,36 @@ async def status():
         "project": getattr(indexer, "current_project", None),
     }
 
+def _memory_body(content: str) -> str:
+    """The editable notes body — content minus the header/comment lines."""
+    keep = [l for l in content.splitlines()
+            if not (l.strip().startswith("#") or l.strip().startswith("<!--"))]
+    return "\n".join(keep).strip()
+
 @app.get("/memory")
 async def memory_view():
     """Kamil's self-authored memory.md — the notes he keeps about his world."""
     from core import self_memory
-    return {"content": self_memory.load_memory()}
+    content = self_memory.load_memory()
+    return {"content": content, "body": _memory_body(content)}
+
+class MemoryBody(BaseModel):
+    body: str
+
+class MemoryForget(BaseModel):
+    query: str
+
+@app.post("/memory")
+async def memory_save(data: MemoryBody):
+    """Hand-edit: replace the whole notes body (header preserved)."""
+    from core import self_memory
+    return self_memory.set_memory(data.body)
+
+@app.post("/memory/forget")
+async def memory_forget(data: MemoryForget):
+    """Prune a single note by its text."""
+    from core import self_memory
+    return self_memory.forget(data.query)
 
 def _memory_notes() -> list[str]:
     from core import self_memory

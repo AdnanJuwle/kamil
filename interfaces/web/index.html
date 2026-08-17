@@ -96,6 +96,18 @@
   .worklog .empty, .cards .empty, #web-results .empty { font-family:var(--serif); font-style:italic; color:var(--faint); margin-top:12px; }
   .doc { margin-top:18px; font-family:var(--serif); font-size:15px; line-height:1.7; color:#DCD3C4; max-width:70ch; }
   .doc .md-code, .doc .md-inline { font-family:var(--mono); }
+  .mem-tools { display:flex; gap:8px; margin-top:14px; }
+  #memory-notes { margin-top:16px; display:flex; flex-direction:column; gap:2px; max-width:72ch; }
+  .mnote { display:grid; grid-template-columns:1fr 26px; gap:10px; align-items:start; padding:10px 0; border-top:1px solid var(--line-soft);
+    font-family:var(--serif); font-size:14.5px; line-height:1.6; color:#DCD3C4; }
+  .mnote:first-child { border-top:none; }
+  .mnote .mx { opacity:0; background:none; border:none; color:var(--faint); cursor:pointer; font-size:15px; line-height:1; padding:2px; transition:.15s; }
+  .mnote:hover .mx { opacity:1; } .mnote .mx:hover { color:var(--crit); }
+  .mnote.free { grid-template-columns:1fr; font-family:var(--mono); font-size:12.5px; color:var(--muted); }
+  #mem-textarea { width:100%; max-width:72ch; min-height:340px; margin-top:16px; background:#0C0A07; border:1px solid var(--line);
+    border-radius:11px; padding:16px; color:#DCD3C4; font-family:var(--mono); font-size:12.5px; line-height:1.7; resize:vertical; outline:none; }
+  #mem-textarea:focus { border-color:var(--life-deep); }
+  .ghost-btn.subtle { color:var(--faint); }
   .ghost-btn { margin-top:16px; background:var(--raised-2); border:1px solid var(--line); color:var(--muted);
     border-radius:9px; padding:9px 15px; font-family:var(--mono); font-size:11.5px; cursor:pointer; transition:.15s; }
   .ghost-btn:hover { color:var(--ink); border-color:var(--life-deep); }
@@ -298,8 +310,18 @@
         </section>
         <section class="view" id="view-memory">
           <div class="panel">
-            <div class="panel-head">Memory <span class="ph-sub">Kamil writes this himself · memory.md</span></div>
-            <div id="memory-body" class="doc"></div>
+            <div class="panel-head">Memory <span class="ph-sub">Kamil writes this himself — you can prune it · memory.md</span></div>
+            <div class="mem-tools" id="mem-tools-view">
+              <button class="ghost-btn" onclick="memEdit()">edit raw</button>
+            </div>
+            <div id="memory-notes"></div>
+            <div id="mem-editor" hidden>
+              <textarea id="mem-textarea" spellcheck="false"></textarea>
+              <div class="mem-tools">
+                <button class="ghost-btn" onclick="memSave()">save</button>
+                <button class="ghost-btn subtle" onclick="memCancel()">cancel</button>
+              </div>
+            </div>
           </div>
         </section>
         <section class="view" id="view-skills">
@@ -795,13 +817,47 @@
       .then(()=>{ loadWork(); pollStatus(); });
   }
 
+  let _memBody = '';
+  function mdInline(s) { return escapeHtml(s).replace(/`([^`]+)`/g, '<code class="md-inline">$1</code>').replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>'); }
   async function loadMemory() {
-    const box = document.getElementById('memory-body');
+    const box = document.getElementById('memory-notes');
     box.innerHTML = '<div class="empty">loading…</div>';
-    try { const d = await fetch('/memory').then(r=>r.json());
-      const clean = (d.content||'').replace(/<!--[\s\S]*?-->/g, '').trim();
-      box.innerHTML = clean ? mdToHtml(clean) : '<div class="empty">memory is empty — Kamil hasn\'t written anything yet</div>';
+    try {
+      const d = await fetch('/memory').then(r=>r.json());
+      _memBody = d.body || '';
+      const lines = _memBody.split('\n').map(l => l.trim()).filter(Boolean);
+      if (!lines.length) { box.innerHTML = '<div class="empty">memory is empty — Kamil hasn\'t written anything yet</div>'; return; }
+      box.innerHTML = lines.map(l => {
+        if (l.startsWith('- ')) {
+          const t = l.slice(2).trim();
+          return '<div class="mnote"><div>' + mdInline(t) + '</div><button class="mx" title="forget this" data-note="' + escapeHtml(t) + '">×</button></div>';
+        }
+        return '<div class="mnote free">' + escapeHtml(l) + '</div>';
+      }).join('');
+      box.querySelectorAll('.mx').forEach(b => b.onclick = () => forgetNote(b.dataset.note));
     } catch { box.innerHTML = '<div class="empty">couldn\'t load memory</div>'; }
+  }
+  function memEdit() {
+    document.getElementById('mem-textarea').value = _memBody;
+    document.getElementById('memory-notes').hidden = true;
+    document.getElementById('mem-tools-view').hidden = true;
+    document.getElementById('mem-editor').hidden = false;
+    document.getElementById('mem-textarea').focus();
+  }
+  function memCancel() {
+    document.getElementById('mem-editor').hidden = true;
+    document.getElementById('memory-notes').hidden = false;
+    document.getElementById('mem-tools-view').hidden = false;
+  }
+  async function memSave() {
+    const body = document.getElementById('mem-textarea').value;
+    try { await fetch('/memory', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({body})}); appendSystem('memory updated'); }
+    catch { appendSystem('couldn\'t save memory'); }
+    memCancel(); loadMemory();
+  }
+  async function forgetNote(text) {
+    try { await fetch('/memory/forget', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({query:text})}); } catch {}
+    loadMemory();
   }
 
   async function loadSkills() {
