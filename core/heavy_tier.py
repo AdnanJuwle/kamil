@@ -83,11 +83,42 @@ def mark_activity() -> None:
     _arm_idle()
 
 
+def _kill_stale() -> None:
+    """Kill whatever is listening on HEAVY_PORT. A heavy-model subprocess from a
+    previous run often survives an app restart on Windows; if we reuse it we'd be
+    stuck with its OLD config (e.g. an 8k context that 400s on the agent prompt)."""
+    try:
+        import psutil
+        for c in psutil.net_connections(kind="inet"):
+            if c.laddr and c.laddr.port == HEAVY_PORT and c.status == psutil.CONN_LISTEN and c.pid:
+                try:
+                    psutil.Process(c.pid).kill()
+                    print(f"[heavy] killed stale process on :{HEAVY_PORT} (pid {c.pid})")
+                except Exception:
+                    pass
+    except Exception:
+        try:
+            subprocess.run(["powershell", "-Command",
+                            f"Get-NetTCPConnection -LocalPort {HEAVY_PORT} -State Listen "
+                            f"-ErrorAction SilentlyContinue | ForEach-Object {{ Stop-Process -Id $_.OwningProcess -Force }}"],
+                           capture_output=True, timeout=8)
+        except Exception:
+            pass
+
+
 def ensure_loaded(timeout: int = 240) -> bool:
     """Spawn the heavy model if not already running. Returns True when healthy."""
     global _proc
     with _lock:
-        if _is_running():
+        # If we didn't spawn it this process but something's on the port, it's a
+        # stale server from a previous run — kill it so we respawn with current config.
+        if _proc is None and _is_running():
+            _kill_stale()
+            for _ in range(10):
+                if not _is_running():
+                    break
+                time.sleep(0.5)
+        if _proc is not None and _is_running():
             _arm_idle()
             return True
         if not available():

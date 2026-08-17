@@ -109,6 +109,22 @@ class Orchestrator:
             self.history = self.history[n:]
             save_history(self.history)
 
+    def _cap_prompt(self, messages: list[dict], max_chars: int) -> list[dict]:
+        """Keep the total prompt under max_chars by dropping the OLDEST middle
+        messages (never the system prompt [0] or the final user message [-1])."""
+        def total():
+            return sum(len(m.get("content", "")) for m in messages)
+        # drop from index 1 upward (oldest history) until it fits
+        while total() > max_chars and len(messages) > 2:
+            del messages[1]
+        # if still too big, it's the system prompt itself (huge code context) — trim it
+        if total() > max_chars and messages:
+            over = total() - max_chars
+            sys = messages[0].get("content", "")
+            if len(sys) > over + 2000:
+                messages[0]["content"] = sys[: len(sys) - over - 200] + "\n…(context trimmed)"
+        return messages
+
     def _looks_like_coding(self, message: str) -> bool:
         """Does this task actually need the big coding model? (vs. a web lookup or
         file read the 8B can drive.)"""
@@ -489,6 +505,11 @@ class Orchestrator:
             "web_search — then read/answer with what you found. NEVER reply 'I can't "
             "answer' or 'I'm only trained to 2023'. You have web_search; use it."
         )
+
+        # Hard cap on prompt size so the agent can never overflow the model's
+        # context and 400 — trim the OLDEST history turns (keep system + newest),
+        # leaving room for tool results + generation within a 32k window.
+        messages = self._cap_prompt(messages, max_chars=int(os.getenv("KAMIL_AGENT_PROMPT_CHARS", "88000")))
 
         # Only spin up the heavy coding model for actual CODING tasks. Web lookups,
         # file reads, and general questions run the agent on the fast 8B (no ~30s
