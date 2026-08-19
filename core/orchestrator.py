@@ -184,6 +184,11 @@ class Orchestrator:
             "When a tool FAILS, do not go silent or give up: retry with a corrected call, or say "
             "exactly what's blocking you and what you'll try next. A failed tool is not a stopping "
             "condition — only a successful one is.\n"
+            "YOUR OWN SOURCE: you (Kamil) are a Python/FastAPI system at C:\\kamil. When asked "
+            "about your own code/source/architecture, READ files under C:\\kamil (core\\, actions\\, "
+            "interfaces\\, models\\) — that's the real you. It is NOT Kamil_v1/Kamil_v2 in "
+            "Documents\\repos (those are scratch projects). You can read your own code but not "
+            "modify it; code13\\ is sealed. Never invent a 'get_code' tool — just read the files.\n"
             "CURRENT INFO: your training stops at 2023, so for ANY recent/news/price/'latest' "
             "question your FIRST action is web_search, then answer from what you found. Use it."
         )
@@ -214,13 +219,49 @@ class Orchestrator:
             print(f"[orchestrator] code context error: {e}")
         return header
 
-    def _coding_agent_messages(self, user_message: str, tool_instr: str) -> list[dict]:
+    def _asks_about_own_source(self, text: str) -> bool:
+        """True when Adnan is asking about KAMIL'S OWN code/source/architecture (which
+        lives at C:\\kamil), not about a project in Documents\\repos."""
+        t = (text or "").lower()
+        # direct "how are/were you built/made/designed" style self-inquiries
+        if any(p in t for p in (
+                "how are you built", "how were you built", "how are you made",
+                "how were you made", "how you are built", "how you're built",
+                "how do you work", "how you work", "what are you made of",
+                "how are you designed", "how were you designed")):
+            return True
+        code_word = any(w in t for w in (
+            "source", "code", "codebase", "architecture", "internals",
+            "implementation", "your files"))
+        self_word = any(w in t for w in ("your", "yourself", "you're"))
+        return code_word and self_word
+
+    def _self_source_context(self, user_message: str) -> str:
+        """Point the agent at Kamil's OWN source (read-only) when asked about itself."""
+        root = "C:\\kamil"
+        return (
+            "## YOUR OWN SOURCE\n"
+            f"You (Kamil) are a local Python/FastAPI system whose source lives at {root}. "
+            "This is literally YOU — not a project in Documents\\repos (Kamil_v1 / Kamil_v2 are "
+            "unrelated scratch projects, NOT your code). To answer questions about yourself or "
+            "suggest improvements, READ your real files:\n"
+            "  - core\\        orchestrator, memory, model tiers, config\n"
+            "  - actions\\     your tools + the agentic loop\n"
+            "  - interfaces\\  the web app (FastAPI backend + UI)\n"
+            "  - models\\      the llama.cpp client\n"
+            f"Use read_file / list_directory with full paths under {root}. You CAN read your own "
+            "code but you CANNOT modify it — changes to your own brain go through Adnan, and "
+            "code13\\ is sealed and off-limits. There is no 'get_code' tool; never invent one — "
+            "just read the files. Ground every claim about yourself in a file you actually read.")
+
+    def _coding_agent_messages(self, user_message: str, tool_instr: str,
+                               own_source: bool = False) -> list[dict]:
         """A clean, persona-free prompt for the aligned coding model."""
         system = ("You are an expert software engineer and coding agent working inside Adnan's "
                   "local project workspace on his own machine. Complete his coding request "
                   "precisely and practically: write correct, complete, runnable code and use your "
                   "tools to do it. Keep prose brief.\n\n" + tool_instr)
-        ctx = self._project_code_context(user_message)
+        ctx = self._self_source_context(user_message) if own_source else self._project_code_context(user_message)
         if ctx:
             system += "\n\n" + ctx
         recent = [m for m in getattr(self.ctx, "ram", [])[-6:]
@@ -590,9 +631,14 @@ class Orchestrator:
         # Load the project the user named. The coding path uses a clean prompt (not
         # _build_messages, where auto-switch normally lives), so without this the
         # coder gets NO project directory and guesses a random folder (Desktop).
+        own_source = False
         if self.indexer:
             mentioned = self.resolve_project(user_message)
-            if mentioned and mentioned != self.indexer.current_project:
+            # A question about Kamil's OWN code points at C:\kamil, not a repos project.
+            own_source = self._asks_about_own_source(user_message) and not mentioned
+            if own_source:
+                print("[orchestrator] self-source question — pointing at C:\\kamil (read-only)")
+            elif mentioned and mentioned != self.indexer.current_project:
                 print(f"[orchestrator] Project named: {mentioned} — auto-switching (agent)")
                 self.open_project(mentioned)
         tool_instr = self._agent_tool_instructions()
@@ -627,7 +673,8 @@ class Orchestrator:
             # ("no content policy", political/religious framing, "uncensored") makes
             # the ALIGNED coder refuse benign tasks. The coder is a tool — give it a
             # focused coding brief + the project's code + the tools, nothing else.
-            messages = self._coding_agent_messages(user_message, tool_instr + (voice_note if voice else ""))
+            messages = self._coding_agent_messages(user_message, tool_instr + (voice_note if voice else ""),
+                                                   own_source=own_source)
         else:
             # 8B chat model (lexi, uncensored) keeps Kamil's full persona.
             messages = self._build_messages(user_message)
