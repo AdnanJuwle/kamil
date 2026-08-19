@@ -6,7 +6,8 @@ from context.watcher import WATCHED_EXTENSIONS, EXCLUDED_DIRS
 from datetime import datetime
 
 EXCLUDED_FILES = {'package-lock.json', 'yarn.lock', 'poetry.lock', '.gitignore'}
-PROJECTS_DIR = r"C:\Users\adnan\Documents\repos"
+from core.config import PROJECTS_ROOT
+PROJECTS_DIR = PROJECTS_ROOT
 import json
 
 INDEXED_CACHE_PATH = r"C:\kamil\data\indexed_projects.json"
@@ -103,8 +104,8 @@ class Indexer:
         """Find the root directory of a project."""
         # Check known locations
         candidates = [
-            os.path.join(r'C:\Users\adnan\Documents\repos', project_name, 'navigation_ros'),
-            os.path.join(r'C:\Users\adnan\Documents\repos', project_name),
+            os.path.join(PROJECTS_DIR, project_name, 'navigation_ros'),
+            os.path.join(PROJECTS_DIR, project_name),
             os.path.join(r'C:\kamil\workspace', project_name),
         ]
         for path in candidates:
@@ -114,7 +115,7 @@ class Indexer:
 
     def list_projects(self) -> list[str]:
         """Return names of all available project directories."""
-        projects_root = r"C:\Users\adnan\Documents\repos"
+        projects_root = PROJECTS_DIR
         if not os.path.exists(projects_root):
             return []
 

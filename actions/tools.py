@@ -29,7 +29,8 @@ class Permission(str, Enum):
 # agent can read its code to reason about itself but can never modify its own brain.
 # When a project is loaded, writes are further confined to that project's directory.
 # Override with KAMIL_WRITE_ROOTS (semicolon-separated absolute paths).
-_DEFAULT_WRITE_ROOTS = r"C:\Users\adnan\Documents\repos"
+from core.config import PROJECTS_ROOT as _PROJECTS_ROOT
+_DEFAULT_WRITE_ROOTS = _PROJECTS_ROOT
 
 # When a project is open, writes/shell are confined to its directory (set by the
 # orchestrator via set_active_project_dir). None = no project loaded.

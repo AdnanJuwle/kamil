@@ -2,7 +2,7 @@
 from models.client import LlamaClient
 from core.config import (
     KAMIL_SYSTEM_PROMPT, DEFAULT_TEMPERATURE, DEFAULT_MAX_TOKENS,
-    LLAMA_SERVER_URL, VOICE_SERVER_URL
+    LLAMA_SERVER_URL, VOICE_SERVER_URL, PROJECTS_ROOT
 )
 from memory.store import save_history, load_history, clear_history, save_setting, load_setting
 from memory.identity import load_identity, is_new_user, update_identity
@@ -198,7 +198,7 @@ class Orchestrator:
         if not (self.context_enabled and self.indexer and self.indexer.current_project):
             return ""
         proj = self.indexer.current_project
-        proj_dir = f"C:\\Users\\adnan\\Documents\\repos\\{proj}"
+        proj_dir = os.path.join(PROJECTS_ROOT, proj)
         header = (f"## PROJECT\nCurrent project: {proj}\n"
                   f"Project directory: {proj_dir}\n"
                   f"Write EVERY file with a full path inside {proj_dir}. If the user asks for 'its own "
@@ -950,7 +950,7 @@ class Orchestrator:
     def set_project(self, project_name: str, indexer):
         self.enable_context(indexer)
         self.long_term._external_embedder = indexer.embedder
-        project_path = f"C:\\Users\\adnan\\Documents\\repos\\{project_name}"
+        project_path = os.path.join(PROJECTS_ROOT, project_name)
         # Confine agent writes/shell to this project's directory (kills the
         # "guessed a path / fell back to scratch" failure mode).
         try:

@@ -15,6 +15,11 @@ MODELS_DIR = os.path.join(KAMIL_ROOT, "models")
 DATA_DIR = os.path.join(KAMIL_ROOT, "data")
 PROMPTS_DIR = os.path.join(KAMIL_ROOT, "prompts")
 
+# Where Kamil's editable projects live (the coding-agent write root, project
+# auto-load, and the symbol indexer all resolve against this). Override with
+# KAMIL_PROJECTS_ROOT so nothing is nailed to one machine's home directory.
+PROJECTS_ROOT = os.getenv("KAMIL_PROJECTS_ROOT", r"C:\Users\adnan\Documents\repos")
+
 def load_system_prompt() -> str:
     prompt_path = os.path.join(PROMPTS_DIR, 'system.md')
     try:
