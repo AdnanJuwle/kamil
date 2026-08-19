@@ -26,6 +26,7 @@ Events yielded (each a dict with "type"):
   error                 {error}
 """
 
+import os
 import re
 from typing import Callable, Iterator, Optional
 
@@ -33,6 +34,11 @@ from actions.tools import execute_tool, requires_confirmation, parse_tool_calls
 
 DEFAULT_MAX_ITERS = 6
 DEFAULT_MAX_RESULT_CHARS = 2000
+# read_file result cap: big enough that most source files load in ONE read, so the
+# model reviews from real content instead of paging with read_lines and running out
+# of iterations — but bounded so a couple of reads don't overflow the coder's 32k
+# context. ~32k chars ≈ 8k tokens ≈ 600 lines. (orchestrator.py at ~53KB truncates.)
+READ_FILE_CAP = int(os.getenv("KAMIL_READ_FILE_CAP", "32000"))
 
 _FENCE_RE = re.compile(r'```(?:tool|json)?\s*\n.*?```', re.DOTALL)
 
@@ -80,7 +86,7 @@ def _format_results(results: list[tuple[dict, dict]], max_chars: int) -> str:
         # read_file: show the real content (generously), not str(dict)
         if tool == "read_file" and isinstance(out, dict) and "content" in out:
             content = out["content"]
-            cap = max(max_chars, 8000)   # files need to be seen in full to be edited
+            cap = max(max_chars, READ_FILE_CAP)   # a whole source file in one read
             if len(content) > cap:
                 content = (content[:cap] +
                            f"\n…[truncated at {cap} of {len(content)} chars — "
@@ -194,7 +200,7 @@ def _native_result_content(call: dict, res: dict, max_chars: int) -> str:
     out = res.get("output", res)
     if call.get("tool") == "read_file" and isinstance(out, dict) and "content" in out:
         content = out["content"]
-        cap = max(max_chars, 8000)
+        cap = max(max_chars, READ_FILE_CAP)
         if len(content) > cap:
             content = content[:cap] + f"\n…[truncated at {cap} of {len(content)} chars]"
         return content

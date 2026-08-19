@@ -252,7 +252,16 @@ class Orchestrator:
             f"Use read_file / list_directory with full paths under {root}. You CAN read your own "
             "code but you CANNOT modify it — changes to your own brain go through Adnan, and "
             "code13\\ is sealed and off-limits. There is no 'get_code' tool; never invent one — "
-            "just read the files. Ground every claim about yourself in a file you actually read.")
+            "just read the files. Ground every claim about yourself in a file you actually read.\n"
+            "REVIEWING A FILE: read it with ONE read_file call using its full path "
+            f"(e.g. read_file {root}\\core\\orchestrator.py) — one read returns ~600 lines. If it is "
+            "truncated, read the remaining region ONCE more with read_lines; do not page through it "
+            "in tiny chunks. Then base your critique ONLY on what you actually read: cite real "
+            "function/class names and quote the actual code. Do NOT offer generic advice (\"add "
+            "error handling\", \"add docstrings\", \"add tests\", \"avoid hardcoded passwords\") "
+            "unless you SAW that specific gap — this code already has extensive docstrings and error "
+            "handling, so boilerplate suggestions are wrong and unhelpful. Give 2-4 concrete, "
+            "specific improvements tied to real code you read.")
 
     def _coding_agent_messages(self, user_message: str, tool_instr: str,
                                own_source: bool = False) -> list[dict]:
@@ -617,7 +626,7 @@ class Orchestrator:
         save_history(self.history)
         return response
 
-    def chat_agent(self, user_message: str, max_iters: int = 6, voice: bool = False) -> Generator[dict, None, None]:
+    def chat_agent(self, user_message: str, max_iters: int = None, voice: bool = False) -> Generator[dict, None, None]:
         """
         Agentic tool-use loop: the model can call tools, see their results, and
         continue across multiple steps until the task is done. Yields structured
@@ -626,6 +635,9 @@ class Orchestrator:
         """
         from actions.agent import iter_agent, iter_agent_native
         from actions.tools import get_tools_openai_schema
+
+        if max_iters is None:
+            max_iters = int(os.getenv("KAMIL_AGENT_MAX_ITERS", "10"))
 
         self._maybe_compress()
         # Load the project the user named. The coding path uses a clean prompt (not
