@@ -154,6 +154,12 @@ class Orchestrator:
             "NEVER run the file itself with shell: GUI apps (tkinter/PyQt) and servers BLOCK/hang "
             "with no display, so running them only fails and burns turns. If a run fails, do NOT "
             "retry it — py_compile instead and stop. Do not loop on shell failures.\n"
+            "shell is for READ-ONLY inspection (ls, cat, grep, git status) and mkdir ONLY — never "
+            "write files with shell (no > redirects, heredocs, tee, sed -i); create/change files "
+            "ONLY with write_file/edit_file.\n"
+            "When a tool FAILS, do not go silent or give up: retry with a corrected call, or say "
+            "exactly what's blocking you and what you'll try next. A failed tool is not a stopping "
+            "condition — only a successful one is.\n"
             "CURRENT INFO: your training stops at 2023, so for ANY recent/news/price/'latest' "
             "question your FIRST action is web_search, then answer from what you found. Use it."
         )
@@ -581,7 +587,12 @@ class Orchestrator:
                     if heavy_tier.ensure_loaded():
                         from models.client import LlamaClient
                         _hc = LlamaClient(base_url=heavy_tier.HEAVY_URL)
-                        model_fn = lambda msgs: _hc.chat(msgs, max_tokens=agent_max)
+                        # Low temperature + repetition penalty for the coder: better
+                        # code and no rambling/looping on the quantized MoE port
+                        # (Odysseus does the same for large local MoE models).
+                        _coder_sampling = {"repeat_penalty": 1.1, "top_p": 0.9, "top_k": 40}
+                        model_fn = lambda msgs: _hc.chat(msgs, temperature=0.25,
+                                                         max_tokens=agent_max, sampling=_coder_sampling)
                         _heavy = heavy_tier
             except Exception as _e:
                 print(f"[orchestrator] heavy tier unavailable: {_e}")

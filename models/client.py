@@ -9,13 +9,19 @@ class LlamaClient:
         self.base_url = base_url
         self.timeout = timeout
 
-    def chat(self, messages: list[dict], temperature: float = DEFAULT_TEMPERATURE, max_tokens: int = DEFAULT_MAX_TOKENS) -> str:
+    def chat(self, messages: list[dict], temperature: float = DEFAULT_TEMPERATURE,
+             max_tokens: int = DEFAULT_MAX_TOKENS, sampling: dict | None = None) -> str:
         payload = {
             "messages": messages,
             "temperature": temperature,
             "max_tokens": max_tokens,
             "stream": False
         }
+        # Extra sampling controls (repeat_penalty, top_p, top_k, stop, …). llama-server
+        # honours these in the OpenAI-compatible payload. Used to steady the quantized
+        # MoE coder, which loops/rambles at high temperature.
+        if sampling:
+            payload.update(sampling)
         try:
             response = httpx.post(
                 f"{self.base_url}/v1/chat/completions",

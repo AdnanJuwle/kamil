@@ -91,6 +91,26 @@ def _is_script_launch(command: str) -> bool:
     return not _re.search(r'(-m\s+py_compile|py_compile|-m\s+pytest|pytest|-c\s|--version|-m\s+pip)', low)
 
 
+def _is_shell_file_write(command: str) -> bool:
+    """A shell command that writes/edits a file — heredoc, tee, sed -i, PowerShell
+    writers, or a `> file` redirect. Files must go through write_file/edit_file (which
+    show a diff and honour the write roots), not raw shell. (Odysseus enforces the
+    same: bash is read-only inspection.)"""
+    import re as _re
+    low = command.strip().lower()
+    if _re.search(r'<<-?\s*[\'"]?\w', low):                       # heredoc
+        return True
+    if _re.search(r'\btee\b|\bsed\s+-i\b|\bawk\b[^|]*-i\b', low): # tee / in-place edit
+        return True
+    if _re.search(r'\b(out-file|set-content|add-content)\b', low):  # PowerShell writers
+        return True
+    # output redirection to a file, ignoring 2>&1 / >/dev/null / >nul
+    stripped = _re.sub(r'2>&1|2?>\s*(?:/dev/null|nul)\b', '', low)
+    if _re.search(r'>>?\s*[\'"]?[\w./\\~-]+', stripped):
+        return True
+    return False
+
+
 @dataclass
 class ToolParam:
     name: str
@@ -254,6 +274,12 @@ def _shell(params: dict) -> ToolResult:
                           error=("won't run a script directly — GUI apps and servers block with no "
                                  "display and hang. Verify it with `python -m py_compile <path>` instead, "
                                  "then tell the user how to run it themselves. You're done once it compiles."))
+    if _is_shell_file_write(command):
+        return ToolResult(success=False, tool="shell", params=params,
+                          error=("don't write files with shell (redirects/heredocs/tee/sed -i). Use the "
+                                 "write_file tool to create a file or edit_file to change one — they honour "
+                                 "the write roots and show a diff. shell is for read-only inspection "
+                                 "(ls, cat, grep, git status) and mkdir."))
     try:
         result = subprocess.run(
             command,
