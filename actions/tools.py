@@ -23,10 +23,61 @@ class Permission(str, Enum):
 
 
 # ── Guardrails ─────────────────────────────────────────────────────
-# Reads are allowed broadly; WRITES and SHELL are fenced to these roots so an
-# agent loop can't clobber system files or Kamil's own code by accident.
+# Reads are broad but SECRETS are blocked (see _read_denied). WRITES and SHELL are
+# fenced to these roots so an agent loop can't clobber system files or Kamil's own
+# code. Note: C:\kamil (Kamil's own source) is deliberately NOT a write root — the
+# agent can read its code to reason about itself but can never modify its own brain.
+# When a project is loaded, writes are further confined to that project's directory.
 # Override with KAMIL_WRITE_ROOTS (semicolon-separated absolute paths).
-_DEFAULT_WRITE_ROOTS = r"C:\kamil\workspace;C:\Users\adnan\Documents\repos"
+_DEFAULT_WRITE_ROOTS = r"C:\Users\adnan\Documents\repos"
+
+# When a project is open, writes/shell are confined to its directory (set by the
+# orchestrator via set_active_project_dir). None = no project loaded.
+_ACTIVE_PROJECT_DIR: Optional[Path] = None
+
+
+def set_active_project_dir(path: Optional[str]) -> None:
+    """Confine writes/shell to `path` (the loaded project). None clears the fence."""
+    global _ACTIVE_PROJECT_DIR
+    try:
+        _ACTIVE_PROJECT_DIR = Path(path).resolve() if path else None
+    except Exception:
+        _ACTIVE_PROJECT_DIR = None
+
+
+def active_project_dir() -> Optional[Path]:
+    return _ACTIVE_PROJECT_DIR
+
+
+import re as _re_secret
+# Secrets Kamil must never READ — its own keys, .env, and the sealed code13/
+# succession failsafe. This is the privacy guarantee in code: even Kamil can't
+# exfiltrate its own secrets or the sealed word.
+_SECRET_NAME_RE = _re_secret.compile(
+    r'(^\.env(\.|$)|\.(key|pem|pfx|p12|keystore)$|^id_rsa|^credentials(\.|$)'
+    r'|^secrets?\.(json|ya?ml|txt|env|ini)$)', _re_secret.I)
+
+
+def _read_denied(path: str) -> tuple[bool, str]:
+    """True if `path` is a secret off-limits to reads: the sealed code13/ dir, an
+    .env, a private key, or a credentials file — anywhere on disk."""
+    try:
+        low = str(Path(path).resolve()).replace("/", "\\").lower()
+    except Exception:
+        low = str(path).replace("/", "\\").lower()
+    if "\\code13\\" in low or low.endswith("\\code13"):
+        return True, "code13/ is sealed and off-limits"
+    if _SECRET_NAME_RE.search(os.path.basename(low)):
+        return True, f"'{os.path.basename(str(path))}' is a secret (key/.env/credentials)"
+    return False, ""
+
+
+def _shell_touches_secret(command: str) -> bool:
+    """A shell command that would read a secret (cat/type of code13, .env, keys)."""
+    low = command.lower().replace("/", "\\")
+    if "code13" in low:
+        return True
+    return bool(_re_secret.search(r'(\.env(\s|$|\.|")|\.(key|pem|pfx|p12)\b|\bid_rsa\b|\bcredentials\b)', low))
 
 # First-token commands that are never run, plus dangerous substrings.
 _BLOCKED_COMMANDS = {
@@ -58,6 +109,14 @@ def _within_write_roots(path: str) -> bool:
         p = Path(path).resolve()
     except Exception:
         return False
+    # A loaded project confines writes to its own directory — nothing else,
+    # so the agent can't fall back to a scratch dir when it loses the target.
+    if _ACTIVE_PROJECT_DIR is not None:
+        try:
+            p.relative_to(_ACTIVE_PROJECT_DIR)
+            return True
+        except ValueError:
+            return False
     for root in _write_roots():
         try:
             p.relative_to(root)
@@ -65,6 +124,17 @@ def _within_write_roots(path: str) -> bool:
         except ValueError:
             continue
     return False
+
+
+def _outside_roots_msg(path: str) -> str:
+    """Refusal that steers the agent to open_project instead of guessing/falling back."""
+    if _ACTIVE_PROJECT_DIR is not None:
+        return (f"refused: '{path}' is outside the loaded project ({_ACTIVE_PROJECT_DIR}). "
+                "Write inside the project directory. If you meant a different project, call "
+                "open_project first — do NOT invent a path or write to a scratch folder.")
+    return (f"refused: '{path}' is outside the allowed write roots and no project is loaded. "
+            "Call list_projects then open_project to load the right project FIRST, then write "
+            "with a full path inside it. Never guess a path or fall back to a scratch folder.")
 
 
 def _command_allowed(command: str) -> tuple[bool, str]:
@@ -89,6 +159,38 @@ def _is_script_launch(command: str) -> bool:
     if not (_re.match(r'^(py|python|python3)\b', low) and _re.search(r'\.py(\s|"|$)', low)):
         return False
     return not _re.search(r'(-m\s+py_compile|py_compile|-m\s+pytest|pytest|-c\s|--version|-m\s+pip)', low)
+
+
+def _is_long_running(command: str) -> bool:
+    """Commands that routinely take minutes (installs, builds, downloads) and would
+    otherwise die at the shell timeout. Run these in the background automatically."""
+    import re as _re
+    low = command.strip().lower()
+    return bool(_re.search(
+        r'\b(pip\s+install|pip3\s+install|python\s+-m\s+pip\s+install|'
+        r'npm\s+(install|ci|run\s+build|run\s+dev)|npx\b|yarn\b|pnpm\b|'
+        r'flutter\s+(pub\s+get|build|run)|gradle\b|\.\/gradlew|gradlew|'
+        r'cargo\s+(build|install)|go\s+(build|install|get)|make\b|cmake\s+--build|'
+        r'docker\s+(build|pull)|git\s+clone|conda\s+install|apt(-get)?\s+install|'
+        r'huggingface-cli\s+download|wget\b|curl\s+-[^|]*\bO\b)', low))
+
+
+def _job_status(params: dict) -> "ToolResult":
+    """Check on a background shell job started earlier."""
+    from core import bg_jobs
+    job_id = params.get("job_id", "")
+    st = bg_jobs.status(job_id)
+    if st is None:
+        return ToolResult(success=False, tool="job_status", params=params,
+                          error=f"no background job named '{job_id}'. Running jobs: "
+                                + (", ".join(j["job_id"] for j in bg_jobs.list_jobs()) or "none"))
+    tail = st.get("output", "")
+    if len(tail) > 3000:
+        tail = "…" + tail[-3000:]
+    return ToolResult(success=True, tool="job_status", params=params,
+                      output={"job_id": st["job_id"], "status": st["status"],
+                              "returncode": st["returncode"], "label": st["label"],
+                              "output_tail": tail})
 
 
 def _is_shell_file_write(command: str) -> bool:
@@ -151,6 +253,10 @@ class ToolResult:
 
 def _read_file(params: dict) -> ToolResult:
     path = params["path"]
+    denied, why = _read_denied(path)
+    if denied:
+        return ToolResult(success=False, tool="read_file", params=params,
+                          error=f"refused: {why}. Kamil doesn't read secrets — not even its own.")
     try:
         with open(path, "r", encoding="utf-8", errors="replace") as f:
             content = f.read()
@@ -190,10 +296,8 @@ def _write_file(params: dict) -> ToolResult:
     content = _clean_written_content(params["content"])
     if not _within_write_roots(path):
         return ToolResult(
-            success=False,
-            error=f"refused: '{path}' is outside the allowed write roots ({'; '.join(str(r) for r in _write_roots())})",
-            tool="write_file", params=params
-        )
+            success=False, tool="write_file", params=params,
+            error=_outside_roots_msg(path))
     try:
         os.makedirs(os.path.dirname(path), exist_ok=True) if os.path.dirname(path) else None
         with open(path, "w", encoding="utf-8") as f:
@@ -216,7 +320,7 @@ def _edit_file(params: dict) -> ToolResult:
     if not _within_write_roots(path):
         return ToolResult(
             success=False,
-            error=f"refused: '{path}' is outside the allowed write roots",
+            error=_outside_roots_msg(path),
             tool="edit_file", params=params
         )
     try:
@@ -243,6 +347,10 @@ def _edit_file(params: dict) -> ToolResult:
 
 def _list_directory(params: dict) -> ToolResult:
     path = params["path"]
+    denied, why = _read_denied(path)
+    if denied:
+        return ToolResult(success=False, tool="list_directory", params=params,
+                          error=f"refused: {why}.")
     try:
         entries = []
         for entry in os.scandir(path):
@@ -269,6 +377,9 @@ def _shell(params: dict) -> ToolResult:
     allowed, reason = _command_allowed(command)
     if not allowed:
         return ToolResult(success=False, error=f"refused: {reason}", tool="shell", params=params)
+    if _shell_touches_secret(command):
+        return ToolResult(success=False, tool="shell", params=params,
+                          error="refused: that command reads a secret (code13/, .env, or a key). Off-limits.")
     if _is_script_launch(command):
         return ToolResult(success=False, tool="shell", params=params,
                           error=("won't run a script directly — GUI apps and servers block with no "
@@ -280,6 +391,15 @@ def _shell(params: dict) -> ToolResult:
                                  "write_file tool to create a file or edit_file to change one — they honour "
                                  "the write roots and show a diff. shell is for read-only inspection "
                                  "(ls, cat, grep, git status) and mkdir."))
+    if params.get("background") or _is_long_running(command):
+        from core import bg_jobs
+        job = bg_jobs.start(command, cwd)
+        return ToolResult(
+            success=True, tool="shell", params=params,
+            output={"background": True, "job_id": job["job_id"], "label": job["label"],
+                    "note": (f"started in background as {job['job_id']} — it keeps running past the "
+                             "shell timeout and shows in the Work tab. Don't wait on it; use the "
+                             "job_status tool with this job_id if you need the result later.")})
     try:
         result = subprocess.run(
             command,
@@ -563,10 +683,22 @@ TOOLS: dict[str, Tool] = {
         params=[
             ToolParam("command", "string", required=True, description="Command to run"),
             ToolParam("cwd", "string", required=False, description="Working directory", default="C:\\kamil"),
-            ToolParam("timeout", "int", required=False, description="Timeout in seconds", default=30)
+            ToolParam("timeout", "int", required=False, description="Timeout in seconds", default=30),
+            ToolParam("background", "bool", required=False, description=(
+                "Run without waiting — for long commands (installs, builds, downloads) that "
+                "would exceed the timeout. Returns a job_id; poll it with job_status."), default=False)
         ],
         permission=Permission.CONFIRM,
         execute=_shell
+    ),
+    "job_status": Tool(
+        name="job_status",
+        description="Check on a background shell job (started by shell with background=true)",
+        params=[
+            ToolParam("job_id", "string", required=True, description="The job id returned by shell")
+        ],
+        permission=Permission.AUTO,
+        execute=_job_status
     ),
     "search_files": Tool(
         name="search_files",

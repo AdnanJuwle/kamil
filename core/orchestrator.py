@@ -31,6 +31,19 @@ def _agent_needs_confirm():
     return requires_confirmation
 
 
+def _log_agent_event(event: dict) -> None:
+    """Record executed tool calls to the persistent action log (for the Work tab)."""
+    if event.get("type") == "tool_result":
+        try:
+            from core import action_log
+            r = event.get("result") or {}
+            action_log.record_tool(event.get("tool"), r.get("params"),
+                                    ok=event.get("success"),
+                                    detail="" if event.get("success") else str(r.get("error", ""))[:120])
+        except Exception:
+            pass
+
+
 VOICE_HANDOFF_PHRASES = [
     "let me check that for you",
     "give me a moment",
@@ -149,6 +162,13 @@ class Orchestrator:
             "```tool block directly.\n"
             "Use the FULL absolute path inside the project directory when writing files "
             "(e.g. the Project directory shown below), not a bare relative name.\n"
+            "PROJECT FIRST: if the task edits or creates files in a project and NO project is "
+            "loaded (no Project directory shown below), your FIRST tool call is list_projects, "
+            "then open_project with the right name — BEFORE any write_file/edit_file/shell. Never "
+            "guess or invent a path (e.g. C:\\Users\\...\\SomeProject) and never write to a scratch "
+            "folder as a substitute; if a write is refused for being outside the project, open the "
+            "correct project and retry inside it. Once a project is loaded, writes are confined to "
+            "its directory.\n"
             "AFTER writing a file: verify it with EXACTLY `python -m py_compile <full_path>` "
             "(that catches syntax errors). Then you are DONE — report the path and how to run it. "
             "NEVER run the file itself with shell: GUI apps (tkinter/PyQt) and servers BLOCK/hang "
@@ -157,6 +177,10 @@ class Orchestrator:
             "shell is for READ-ONLY inspection (ls, cat, grep, git status) and mkdir ONLY — never "
             "write files with shell (no > redirects, heredocs, tee, sed -i); create/change files "
             "ONLY with write_file/edit_file.\n"
+            "LONG commands (pip install, npm install, flutter pub get, builds, git clone, downloads) "
+            "take minutes — call shell with \"background\": true so they don't hit the timeout. You "
+            "get a job_id back immediately; keep working, and check it later with job_status if you "
+            "need the outcome. Don't sit and wait on a background job.\n"
             "When a tool FAILS, do not go silent or give up: retry with a corrected call, or say "
             "exactly what's blocking you and what you'll try next. A failed tool is not a stopping "
             "condition — only a successful one is.\n"
@@ -630,6 +654,7 @@ class Orchestrator:
         final_text = ""
         terminal = "done"
         for event in loop:
+            _log_agent_event(event)
             if event.get("type") in ("text", "done", "max_iterations") and event.get("text"):
                 final_text = event["text"]
             terminal = event.get("type", terminal)
@@ -693,6 +718,7 @@ class Orchestrator:
         final_text = ""
         terminal = "done"
         for event in loop:
+            _log_agent_event(event)
             if event.get("type") in ("text", "done", "max_iterations") and event.get("text"):
                 final_text = event["text"]
             terminal = event.get("type", terminal)
@@ -863,6 +889,13 @@ class Orchestrator:
         self.enable_context(indexer)
         self.long_term._external_embedder = indexer.embedder
         project_path = f"C:\\Users\\adnan\\Documents\\repos\\{project_name}"
+        # Confine agent writes/shell to this project's directory (kills the
+        # "guessed a path / fell back to scratch" failure mode).
+        try:
+            from actions import tools as _tools
+            _tools.set_active_project_dir(project_path)
+        except Exception:
+            pass
         self._project_block = f"""
 
 Active project: {project_name}

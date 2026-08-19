@@ -93,6 +93,10 @@
   .worklog { margin-top:14px; display:flex; flex-direction:column; gap:6px; }
   .worklog .wl { font-family:var(--mono); font-size:11.5px; color:var(--muted); display:flex; gap:9px; }
   .worklog .wl .wk { color:var(--faint); } .worklog .wl.live .wk { color:var(--machine); }
+  .worklog .wl.live { color:var(--machine); }
+  .worklog .wl .wl-kind { color:var(--ink); }
+  .worklog .wl .wl-arg { color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .worklog .wl .wl-ago { margin-left:auto; color:var(--faint); flex-shrink:0; }
   .worklog .empty, .cards .empty, #web-results .empty { font-family:var(--serif); font-style:italic; color:var(--faint); margin-top:12px; }
   .doc { margin-top:18px; font-family:var(--serif); font-size:15px; line-height:1.7; color:#DCD3C4; max-width:70ch; }
   .doc .md-code, .doc .md-inline { font-family:var(--mono); }
@@ -312,8 +316,10 @@
           <div class="panel">
             <div class="panel-head">Work <span class="ph-sub">projects Kamil can open</span></div>
             <div id="work-projects" class="cards"></div>
-            <div class="panel-head" style="margin-top:22px">Recent background work</div>
-            <div id="work-activity" class="worklog"></div>
+            <div class="panel-head" style="margin-top:22px">Everything Kamil has done
+              <button class="ghost-btn" style="float:right;font-size:11px" onclick="clearActions()">clear</button>
+            </div>
+            <div id="work-actions" class="worklog"></div>
           </div>
         </section>
         <section class="view" id="view-memory">
@@ -1069,15 +1075,33 @@
       ).join('') || '<div class="empty">no projects found</div>';
       box.querySelectorAll('.pcard').forEach(c => c.onclick = () => openProjectUI(c.dataset.proj));
     } catch { box.innerHTML = '<div class="empty">couldn\'t load projects</div>'; }
-    const log = document.getElementById('work-activity');
+    const log = document.getElementById('work-actions');
     try {
-      const a = await fetch('/activity').then(r=>r.json());
-      const items = [...(a.active||[]).map(x=>({label:x.label,detail:x.detail,live:true})), ...(a.recent||[])];
-      log.innerHTML = items.length ? items.map(i =>
-        '<div class="wl' + (i.live?' live':'') + '"><span class="wk">' + (i.live?'▸':(i.ok===false?'✗':'✓')) +
-        '</span><span>' + escapeHtml(i.label) + (i.detail?' — ' + escapeHtml(i.detail):'') + '</span></div>'
-      ).join('') : '<div class="empty">nothing lately</div>';
+      const [act, acts] = await Promise.all([
+        fetch('/activity').then(r=>r.json()),
+        fetch('/actions').then(r=>r.json()),
+      ]);
+      const live = (act.active||[]).map(x =>
+        '<div class="wl live"><span class="wk">▸</span><span>' + escapeHtml(x.label) +
+        (x.detail?' — ' + escapeHtml(x.detail):'') + '</span></div>').join('');
+      const hist = (acts.actions||[]).map(a =>
+        '<div class="wl"><span class="wk">' + (a.ok===false?'✗':'✓') + '</span>' +
+        '<span class="wl-kind">' + escapeHtml(a.kind) + '</span>' +
+        (a.arg?'<span class="wl-arg">' + escapeHtml(a.arg) + '</span>':'') +
+        '<span class="wl-ago">' + agoText(a.ts) + '</span></div>').join('');
+      log.innerHTML = (live + hist) || '<div class="empty">Kamil hasn\'t done anything yet</div>';
     } catch {}
+  }
+  function agoText(ts) {
+    if (!ts) return '';
+    const s = Math.max(0, Math.floor(Date.now()/1000 - ts));
+    if (s < 60) return s + 's ago';
+    if (s < 3600) return Math.floor(s/60) + 'm ago';
+    if (s < 86400) return Math.floor(s/3600) + 'h ago';
+    return Math.floor(s/86400) + 'd ago';
+  }
+  function clearActions() {
+    fetch('/actions/clear', {method:'POST'}).then(()=>loadWork());
   }
   function openProjectUI(name) {
     appendSystem('opening project: ' + name);

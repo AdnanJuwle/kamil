@@ -406,6 +406,19 @@ async def activity_poll():
     snap["project"] = getattr(indexer, "current_project", None)
     return snap
 
+@app.get("/actions")
+async def actions_view(n: int = 80):
+    """Persistent history of everything Kamil has DONE — tool calls + background
+    jobs, newest first. The Work tab shows this."""
+    from core import action_log
+    return {"actions": action_log.recent(n)}
+
+@app.post("/actions/clear")
+async def actions_clear():
+    from core import action_log
+    action_log.clear()
+    return {"status": "cleared"}
+
 @app.post("/learn")
 async def learn(file: UploadFile = File(...), domain: str = Form("general")):
     """Upload a doc -> Kamil ingests it as a skill (immediately queryable)."""

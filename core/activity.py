@@ -41,13 +41,20 @@ def end(tok: int, ok: bool = True, detail: str | None = None) -> None:
     with _lock:
         item = _active.pop(tok, None)
         if item is not None:
+            fin_detail = detail if detail is not None else item["detail"]
             _recent.append({
                 "label": item["label"],
-                "detail": detail if detail is not None else item["detail"],
+                "detail": fin_detail,
                 "ok": ok,
                 "ended": time.time(),
             })
             del _recent[:-_MAX_RECENT]
+            # also persist to the action log so it shows in the Work tab's history
+            try:
+                from core import action_log
+                action_log.record(item["label"], fin_detail, ok=ok)
+            except Exception:
+                pass
 
 
 def snapshot(recent_window: float = 45.0) -> dict:

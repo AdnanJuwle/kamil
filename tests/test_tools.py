@@ -7,7 +7,9 @@ from actions import tools
 @pytest.fixture(autouse=True)
 def write_roots(tmp_path, monkeypatch):
     monkeypatch.setenv("KAMIL_WRITE_ROOTS", str(tmp_path))
+    tools.set_active_project_dir(None)   # no project fence unless a test sets one
     yield
+    tools.set_active_project_dir(None)
 
 
 # ── write fencing ─────────────────────────────────────────────────
@@ -23,6 +25,40 @@ def test_write_outside_root_refused():
     res = tools.execute_tool("write_file", {"path": "C:\\Windows\\evil.txt", "content": "x"})
     assert res.success is False
     assert "outside the allowed write roots" in res.error
+
+
+def test_active_project_confines_writes(tmp_path, monkeypatch):
+    proj = tmp_path / "MyProj"
+    proj.mkdir()
+    monkeypatch.setenv("KAMIL_WRITE_ROOTS", str(tmp_path))   # tmp_path is a root
+    tools.set_active_project_dir(str(proj))
+    inside = tools.execute_tool("write_file", {"path": str(proj / "a.py"), "content": "x"})
+    assert inside.success is True
+    # a sibling under the SAME write root is still refused while a project is loaded
+    outside = tools.execute_tool("write_file", {"path": str(tmp_path / "scratch.py"), "content": "x"})
+    assert outside.success is False
+    assert "outside the loaded project" in outside.error
+
+
+# ── secret read denylist ──────────────────────────────────────────
+
+def test_read_secret_denied(tmp_path):
+    env = tmp_path / ".env"
+    env.write_text("API_KEY=sekret")
+    res = tools.execute_tool("read_file", {"path": str(env)})
+    assert res.success is False and "secret" in res.error
+
+
+def test_read_source_allowed(tmp_path):
+    src = tmp_path / "main.py"
+    src.write_text("print('hi')")
+    res = tools.execute_tool("read_file", {"path": str(src)})
+    assert res.success is True and "hi" in res.output["content"]
+
+
+def test_shell_secret_reference_refused():
+    res = tools.execute_tool("shell", {"command": "type C:\\kamil\\.env"})
+    assert res.success is False and "secret" in res.error
 
 
 # ── edit_file ─────────────────────────────────────────────────────
