@@ -521,6 +521,8 @@
     if (/\b(today|current|currently|latest|right now|this (week|month|year)|recent(ly)?|price|prices|stock|weather|news|score|exchange rate|dollar|usd|inr|euro|who won|as of)\b/.test(s)) return true;
     // action verbs (do the thing)
     if (/\b(create|write|make|build|generate|run|execute|fix|edit|change|add|implement|refactor|delete|remove|install|rename|move|append|look up|search for|google|find me|open the|read the|list the|grep|show me the|go through|check the|scan the|inspect|debug)\b/.test(s)) return true;
+    // vision -> Kamil's eyes (see/look tools live in agent mode)
+    if (/\b(look at|take a look|what am i looking at|what do you see|can you see|what'?s in front of me|what'?s on (my|the) desk|use your (eyes|camera|webcam)|through the (camera|webcam)|check the (camera|webcam|image|photo|picture|screen)|describe (this|the|my) (image|photo|picture|screen|frame)|read (this|the) (sign|label|screen|text))\b/.test(s)) return true;
     // codebase / files
     if (/\.(py|js|ts|jsx|tsx|md|json|txt|html|css|java|cpp|c|rs|go|sh|yml|yaml|toml|ino)\b/.test(s)) return true;
     if (/\b(folder|directory|repo|repository|codebase|file|files|function|functions|class|classes|algorithm|algorithms|the code|which functions|what methods)\b/.test(s)) return true;
