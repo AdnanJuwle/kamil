@@ -692,7 +692,11 @@ class Orchestrator:
         agent_temp = 0.7
         agent_sampling = None
         _heavy = None
-        if os.getenv("KAMIL_AGENT_HEAVY", "1") == "1" and self._looks_like_coding(user_message):
+        # Voice stays on the fast 8B: a spoken answer is a short summary, and the 30B
+        # coder's ~22s load + slow generation just reads as "frozen" on a call. Deep
+        # code analysis belongs in the text/Control path where waiting is fine.
+        if (os.getenv("KAMIL_AGENT_HEAVY", "1") == "1" and not voice
+                and self._looks_like_coding(user_message)):
             try:
                 from core import heavy_tier
                 if heavy_tier.available():
