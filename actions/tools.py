@@ -128,6 +128,14 @@ def _within_write_roots(path: str) -> bool:
 
 def _outside_roots_msg(path: str) -> str:
     """Refusal that steers the agent to open_project instead of guessing/falling back."""
+    try:
+        low = str(Path(path).resolve()).replace("/", "\\").lower()
+    except Exception:
+        low = str(path).replace("/", "\\").lower()
+    if low.startswith("c:\\kamil\\") or low == "c:\\kamil":
+        return ("refused: that is KAMIL'S OWN SOURCE CODE — it is strictly read-only. You can "
+                "read and critique your own code but you cannot modify it; changes to your own "
+                "brain go through Adnan. Deliver your improvements as TEXT suggestions, not edits.")
     if _ACTIVE_PROJECT_DIR is not None:
         return (f"refused: '{path}' is outside the loaded project ({_ACTIVE_PROJECT_DIR}). "
                 "Write inside the project directory. If you meant a different project, call "
@@ -936,7 +944,11 @@ def requires_confirmation_call(tool_name: str, params: dict) -> bool:
         return False
     params = params or {}
     if tool_name in ("write_file", "edit_file"):
-        return not _within_write_roots(params.get("path", ""))
+        # Writes are gated by the write-root fence at EXECUTION, not by a prompt:
+        # in-root -> runs and writes; out-of-root (incl. Kamil's own C:\kamil source)
+        # -> runs and is hard-refused. Never pause here — prompting to "approve" an
+        # out-of-root write is misleading, since it's refused either way.
+        return False
     if tool_name == "shell":
         ok, _ = _command_allowed(params.get("command", ""))
         return not ok

@@ -183,9 +183,12 @@ def test_call_aware_confirmation_in_vs_out_of_fence(tmp_path, monkeypatch):
     inside = str(tmp_path / "a.py")
     rc = tools.requires_confirmation_call
     assert rc("read_file", {}) is False                          # auto tool
-    assert rc("edit_file", {"path": inside}) is False            # in fence -> auto
-    assert rc("write_file", {"path": inside}) is False           # in fence -> auto
-    assert rc("edit_file", {"path": "C:\\Windows\\x.py"}) is True  # outside -> pause
+    assert rc("edit_file", {"path": inside}) is False            # in fence -> auto (writes)
+    assert rc("write_file", {"path": inside}) is False           # in fence -> auto (writes)
+    # Out-of-fence writes no longer PAUSE: they auto-run and are hard-refused at
+    # execution by the write-root fence, so a misleading "approve" prompt is skipped.
+    assert rc("edit_file", {"path": "C:\\Windows\\x.py"}) is False
+    assert rc("write_file", {"path": "C:\\kamil\\core\\orchestrator.py"}) is False
     assert rc("shell", {"command": "echo hi"}) is False          # allowed -> auto
     assert rc("shell", {"command": "rm -rf C:\\"}) is True        # denylisted -> pause
 

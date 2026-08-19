@@ -183,7 +183,7 @@ def test_resume_with_denial_continues():
 
 # ── strip_tool_blocks ─────────────────────────────────────────────
 
-def test_autonomy_in_fence_edit_autoruns_out_of_fence_pauses(tmp_path, monkeypatch):
+def test_autonomy_writes_autorun_shell_denylist_pauses(tmp_path, monkeypatch):
     monkeypatch.setenv("KAMIL_WRITE_ROOTS", str(tmp_path))
     from actions.tools import requires_confirmation_call
     inside = (str(tmp_path) + "/a.py").replace("\\", "/")
@@ -195,11 +195,19 @@ def test_autonomy_in_fence_edit_autoruns_out_of_fence_pauses(tmp_path, monkeypat
                          executor=fake_executor, needs_confirm=requires_confirmation_call)
     assert r1["status"] == "done"
 
-    # out-of-fence write: pauses for confirmation
-    m2 = FakeModel(['```tool\n{"tool":"write_file","params":{"path":"C:/Windows/x","content":"x"}}\n```'])
+    # out-of-fence write: no longer pauses — it auto-runs and is hard-refused at
+    # execution by the write-root fence (so no misleading approval prompt).
+    m2 = FakeModel(['```tool\n{"tool":"write_file","params":{"path":"C:/Windows/x","content":"x"}}\n```',
+                    "Can't write there."])
     r2 = agent.run_agent(m2, [{"role": "user", "content": "go"}],
                          executor=fake_executor, needs_confirm=requires_confirmation_call)
-    assert r2["status"] == "awaiting_confirmation"
+    assert r2["status"] == "done"
+
+    # shell on the denylist STILL pauses for confirmation
+    m3 = FakeModel(['```tool\n{"tool":"shell","params":{"command":"rm -rf C:/"}}\n```'])
+    r3 = agent.run_agent(m3, [{"role": "user", "content": "go"}],
+                         executor=fake_executor, needs_confirm=requires_confirmation_call)
+    assert r3["status"] == "awaiting_confirmation"
 
 
 def test_read_file_result_shows_full_clean_content():
