@@ -1100,13 +1100,20 @@ async def _voice_reply_stream(user_message: str):
     async for b64 in _synth(ann):
         yield f"data: {json.dumps({'type': 'audio', 'seq': 0, 'audio': b64})}\n\n"
 
-    final_text = ""; vision_answer = ""
+    final_text = ""; vision_answer = ""; spoke_status = False
     while True:
         ev = await q.get()
         if ev is None:
             break
         t = ev.get("type")
-        if t == "tool_result" and ev.get("tool") in ("see", "look") and ev.get("success"):
+        if t == "status" and not spoke_status and ev.get("text"):
+            # e.g. "spinning up the coding model…" — speak it so the ~22s model load
+            # has a voice cue instead of dead air.
+            spoke_status = True
+            yield f"data: {json.dumps({'type': 'status', 'text': ev['text']})}\n\n"
+            async for b64 in _synth(ev["text"].replace("…", "")):
+                yield f"data: {json.dumps({'type': 'audio', 'seq': 0, 'audio': b64})}\n\n"
+        elif t == "tool_result" and ev.get("tool") in ("see", "look") and ev.get("success"):
             out = (ev.get("result") or {}).get("output") or {}
             if out.get("answer"):
                 vision_answer = out["answer"]

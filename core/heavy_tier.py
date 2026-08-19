@@ -119,17 +119,37 @@ def state() -> str:
         return "off"
 
 
+def _port_up(port: int) -> bool:
+    try:
+        return httpx.get(f"http://127.0.0.1:{port}/health", timeout=1).status_code == 200
+    except Exception:
+        return False
+
+
+def _other_tiers_vram_gb() -> float:
+    """VRAM already held by OTHER on-demand tiers (Chatterbox voice ~3GB, vision ~8GB).
+    Without subtracting these, the heavy coder over-commits to the GPU and spills into
+    shared/CPU memory — which is catastrophically slow (looks like a freeze). Chatterbox
+    is now the default voice and stays resident, so this is the common case."""
+    used = 0.0
+    if _port_up(int(os.getenv("KAMIL_CHATTERBOX_PORT", "8095"))):
+        used += float(os.getenv("KAMIL_CHATTERBOX_VRAM_GB", "3"))
+    if _port_up(int(os.getenv("KAMIL_VISION_PORT", "8098"))):
+        used += float(os.getenv("KAMIL_VISION_VRAM_GB", "8"))
+    return used
+
+
 def plan() -> tuple[dict, dict]:
-    """(meta, fit-profile) for the heavy model, fit into VRAM minus the chat tier.
-    Match the chat model's context (32k) so the agent's big prompt (system + project
-    code + tool schema + history) doesn't overflow and 400. q4_0 KV keeps that 32k
-    cache small enough to still fit on the GPU alongside the chat tier."""
+    """(meta, fit-profile) for the heavy model, fit into VRAM minus the chat tier AND
+    any other resident tiers (Chatterbox/vision). Match the chat model's context (32k)
+    so the agent's big prompt doesn't overflow and 400. q4_0 KV keeps that 32k cache
+    small enough to fit on the GPU alongside the other tiers."""
     ctx = int(os.getenv("KAMIL_HEAVY_CTX", "32768"))
     path = heavy_model()
     meta = hwfit.model_meta(path)
     meta["weights_gb"] = _total_weights_gb(path)   # sum shards for split GGUFs
-    avail = hwfit.detect_vram_gb() - CHAT_VRAM_GB
-    return meta, hwfit.fit_profile(meta, vram_gb=avail, ctx=ctx, kv_type="q4_0")
+    avail = hwfit.detect_vram_gb() - CHAT_VRAM_GB - _other_tiers_vram_gb()
+    return meta, hwfit.fit_profile(meta, vram_gb=max(avail, 4.0), ctx=ctx, kv_type="q4_0")
 
 
 def _arm_idle() -> None:
