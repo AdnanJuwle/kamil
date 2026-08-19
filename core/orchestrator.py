@@ -207,6 +207,9 @@ class Orchestrator:
             "interfaces\\, models\\) — that's the real you. It is NOT Kamil_v1/Kamil_v2 in "
             "Documents\\repos (those are scratch projects). You can read your own code but not "
             "modify it; code13\\ is sealed. Never invent a 'get_code' tool — just read the files.\n"
+            "VISION: when asked what you see / to look / open the camera, you MUST call the look "
+            "tool FRESH every single time — even if you looked a moment ago. The scene changes; "
+            "never answer from a previous frame or from memory. Report only what THIS look returns.\n"
             "CURRENT INFO: your training stops at 2023, so for ANY recent/news/price/'latest' "
             "question your FIRST action is web_search, then answer from what you found. Use it."
         )

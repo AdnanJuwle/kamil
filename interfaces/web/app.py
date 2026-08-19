@@ -835,6 +835,46 @@ async def _synth(text: str):
         yield base64.b64encode(buf.read()).decode()
 
 
+async def _emit_spoken(text: str):
+    """Emit a completed reply as SSE: the text, then audio synthesized sentence-by-
+    sentence (so playback starts on sentence 1), then done."""
+    yield f"data: {json.dumps({'type': 'text', 'text': text})}\n\n"
+    seq = 0; buf = text
+    while True:
+        m = _SENT_BOUNDARY.search(buf)
+        if not m:
+            break
+        sentence, buf = buf[:m.end()], buf[m.end():]
+        if sentence.strip():
+            async for b64 in _synth(sentence):
+                yield f"data: {json.dumps({'type': 'audio', 'seq': seq, 'audio': b64})}\n\n"; seq += 1
+    if buf.strip():
+        async for b64 in _synth(buf):
+            yield f"data: {json.dumps({'type': 'audio', 'seq': seq, 'audio': b64})}\n\n"; seq += 1
+    yield f"data: {json.dumps({'type': 'done'})}\n\n"
+    yield "data: [DONE]\n\n"
+
+
+# Vision intent: an explicit request to LOOK. These must capture a FRESH frame every
+# time — never let the model answer from a past frame or memory (it does, in a call).
+_VISION_INTENT = re.compile(
+    r"\b(what do you see|what you see|what am i looking at|what'?s in front|"
+    r"look at (me|this|that|it)|open (the )?camera|use your (eyes|camera|webcam)|"
+    r"can you see|look again|see me|describe what|tell me what you see|"
+    r"what am i (doing|holding|wearing)|check the (camera|webcam))\b", re.I)
+# Vague follow-ups that mean "look again" when the previous turn was a vision turn.
+_VISION_FOLLOWUP = re.compile(r"^\s*(what about now|how about now|and now|now|again|what now|look again)\s*[?.!]*\s*$", re.I)
+_last_voice_vision = False   # was the previous spoken turn a vision look?
+
+
+def _wants_vision(text: str) -> bool:
+    return bool(_VISION_INTENT.search((text or "").lower()))
+
+
+def _is_vision_followup(text: str) -> bool:
+    return bool(_VISION_FOLLOWUP.match((text or "").strip()))
+
+
 async def _stream_voice_conversation(user_message: str):
     """A conversational spoken reply, STREAMED: generate tokens and synthesise +
     emit audio sentence-by-sentence as they complete, so the voice starts on the
@@ -885,18 +925,43 @@ async def _stream_voice_conversation(user_message: str):
 
 
 async def _voice_reply_stream(user_message: str):
-    """The single spoken-reply pipeline for BOTH call modes. A real request (tools:
-    vision/web/files/actions) runs the agent for REAL — so 'open the camera' actually
-    looks instead of hallucinating. Everything else is a streamed conversational
-    reply. Audio always streams sentence-by-sentence."""
+    """The single spoken-reply pipeline for BOTH call modes.
+    1. An explicit LOOK request captures a FRESH frame directly (bypassing the model's
+       flaky tool-choice, which in a call answers from a past frame / memory).
+    2. Other real requests run the tool agent.
+    3. Everything else is a streamed conversational reply.
+    Audio always streams sentence-by-sentence."""
+    global _last_voice_vision
     from core.orchestrator import looks_like_task
+    import asyncio
+    loop = asyncio.get_event_loop()
+
+    # 1) Direct vision — a fresh capture every time.
+    if _wants_vision(user_message) or (_last_voice_vision and _is_vision_followup(user_message)):
+        _last_voice_vision = True
+        question = user_message if _wants_vision(user_message) else "What do you see right now? Describe it concisely."
+        yield f"data: {json.dumps({'type': 'status', 'text': 'looking'})}\n\n"
+        from actions.tools import execute_tool
+        res = await loop.run_in_executor(None, lambda: execute_tool("look", {"question": question}))
+        r = res.to_dict() if hasattr(res, "to_dict") else dict(res)
+        if r.get("success"):
+            answer = (r.get("output") or {}).get("answer") or "I couldn't quite make it out."
+        else:
+            answer = "I couldn't get a look through the camera just now."
+        print(f"Voice (look): {answer[:100]}")
+        async for chunk in _emit_spoken(answer):
+            yield chunk
+        return
+
+    _last_voice_vision = False
+
+    # 3) Conversational (not a task).
     if not looks_like_task(user_message):
         async for chunk in _stream_voice_conversation(user_message):
             yield chunk
         return
 
-    import asyncio
-    loop = asyncio.get_event_loop()
+    # 2) Tool agent for other real requests.
     q: asyncio.Queue = asyncio.Queue()
 
     def worker():
@@ -935,22 +1000,8 @@ async def _voice_reply_stream(user_message: str):
     if not final_text:
         final_text = "I couldn't complete that."
     print(f"Voice (agent): {final_text[:100]}")
-    yield f"data: {json.dumps({'type': 'text', 'text': final_text})}\n\n"
-    # speak sentence-by-sentence so audio starts on sentence 1 (not after the whole paragraph)
-    seq = 0; buf = final_text
-    while True:
-        m = _SENT_BOUNDARY.search(buf)
-        if not m:
-            break
-        sentence, buf = buf[:m.end()], buf[m.end():]
-        if sentence.strip():
-            async for b64 in _synth(sentence):
-                yield f"data: {json.dumps({'type': 'audio', 'seq': seq, 'audio': b64})}\n\n"; seq += 1
-    if buf.strip():
-        async for b64 in _synth(buf):
-            yield f"data: {json.dumps({'type': 'audio', 'seq': seq, 'audio': b64})}\n\n"; seq += 1
-    yield f"data: {json.dumps({'type': 'done'})}\n\n"
-    yield "data: [DONE]\n\n"
+    async for chunk in _emit_spoken(final_text):
+        yield chunk
 
 
 @app.post("/voice_agent_stream")
