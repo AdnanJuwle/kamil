@@ -173,6 +173,14 @@ def _warm_tts():
                 print("Orpheus SNAC warm done")
     except Exception as _e:
         print(f"Orpheus warm failed: {_e}")
+    # Warm faster-whisper's CUDA kernels (the first real transcription is otherwise
+    # ~0.8s vs ~0.16s warm) with a short silent clip.
+    try:
+        import numpy as _np
+        get_whisper().transcribe(_np.zeros(16000, dtype=_np.float32), language="en", beam_size=1)
+        print("Whisper warmup done")
+    except Exception as _e:
+        print(f"Whisper warmup failed: {_e}")
 _thr.Thread(target=_warm_tts, daemon=True).start()
 
 # ── Heartbeat: Kamil's proactive presence ─────────────────────────
