@@ -29,7 +29,7 @@ HEAVY_PORT = int(os.getenv("KAMIL_HEAVY_PORT", "8086"))
 HEAVY_URL = f"http://127.0.0.1:{HEAVY_PORT}"
 MODELS_DIR = os.getenv("KAMIL_MODELS_DIR", r"C:\kamil\models")
 _HEAVY_FALLBACK = r"C:\kamil\models\qwen2.5-coder-14b-q4.gguf"
-CHAT_VRAM_GB = float(os.getenv("KAMIL_CHAT_VRAM_GB", "6"))     # reserve for the chat tier
+CHAT_VRAM_GB = float(os.getenv("KAMIL_CHAT_VRAM_GB", "8"))     # chat 8B + whisper-large + embedder/kokoro
 IDLE_UNLOAD_SECONDS = int(os.getenv("KAMIL_HEAVY_IDLE", "600"))
 
 _proc: subprocess.Popen | None = None
@@ -220,6 +220,7 @@ def ensure_loaded(timeout: int = 240) -> bool:
     try:
         for _ in range(timeout):
             if _is_running():
+                _warmup()   # prime CUDA graphs so the first real turn isn't ~5x slow
                 print("[heavy] ready")
                 _arm_idle()
                 activity.end(tok, ok=True, detail=f"{meta['name']} ready")
@@ -231,6 +232,18 @@ def ensure_loaded(timeout: int = 240) -> bool:
     except BaseException:
         activity.end(tok, ok=False)
         raise
+
+
+def _warmup() -> None:
+    """One tiny generation to trigger CUDA-graph/kernel capture — otherwise the first
+    real agent turn on a freshly-loaded coder is ~5x slow (which made a cold search
+    take minutes). Best-effort."""
+    try:
+        httpx.post(f"{HEAVY_URL}/completion",
+                   json={"prompt": "ok", "n_predict": 8, "temperature": 0.0, "stream": False},
+                   timeout=60)
+    except Exception:
+        pass
 
 
 def unload() -> None:

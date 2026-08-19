@@ -134,13 +134,24 @@ def get_whisper():
     global _whisper_model
     if _whisper_model is None:
         from faster_whisper import WhisperModel
-        size = os.getenv("KAMIL_WHISPER_SIZE", "small")
+        # large-v3 is markedly better on accents than 'small' (which heard "mission.py"
+        # as "machine.py"). int8_float16 keeps it ~2GB and fast on the 3090. Prefer a
+        # LOCAL copy (models/whisper-large-v3) so load never hits the HF Hub (which can
+        # hang) and there are no Windows symlink issues.
+        size = os.getenv("KAMIL_WHISPER_SIZE", "large-v3")
+        local = r"C:\kamil\models\whisper-large-v3"
+        # Use the local large-v3 copy only if it's fully downloaded; else fall back to
+        # 'small' (always cached) so the app never hangs/breaks on a partial download.
+        if size == "large-v3":
+            model_id = local if os.path.isfile(os.path.join(local, "model.bin")) else "small"
+        else:
+            model_id = size
         try:
-            _whisper_model = WhisperModel(size, device="cuda", compute_type="float16")
-            print(f"Whisper: {size} on CUDA (fp16)")
+            _whisper_model = WhisperModel(model_id, device="cuda", compute_type="int8_float16")
+            print(f"Whisper: {os.path.basename(model_id)} on CUDA (int8_float16)")
         except Exception as e:
-            print(f"Whisper: CUDA unavailable ({str(e)[:80]}) — CPU int8")
-            _whisper_model = WhisperModel(size, device="cpu", compute_type="int8")
+            print(f"Whisper: CUDA load failed ({str(e)[:80]}) — CPU int8")
+            _whisper_model = WhisperModel(model_id, device="cpu", compute_type="int8")
     return _whisper_model
 
 # Initialize everything in main process before uvicorn starts
