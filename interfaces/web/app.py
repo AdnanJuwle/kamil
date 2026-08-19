@@ -1083,15 +1083,21 @@ async def _voice_reply_stream(user_message: str):
         loop.call_soon_threadsafe(q.put_nowait, None)
     loop.run_in_executor(None, worker)
 
-    # Announce out loud right away so there's no awkward silence while the tools run
-    # (they're already running in the worker thread). Feels like "let me look into that…"
-    import random
-    filler = random.choice([
-        "Okay, give me a sec.", "Sure, let me look into that.", "One moment, let me check.",
-        "Alright, taking a look now.", "Got it, checking that now.",
-    ])
-    yield f"data: {json.dumps({'type': 'status', 'text': filler})}\n\n"
-    async for b64 in _synth(filler):
+    # A SHORT, ORIGINAL spoken announcement (not a canned phrase) so there's no dead
+    # air while the tools run — Kamil says what he's about to do, in his own words.
+    ann_sys = ("You are Kamil. Adnan just asked you to do something that takes a moment. Reply with "
+               "ONE short, natural spoken sentence that says you're on it and names what you're about "
+               "to do — e.g. \"Sure, let me check the prana folder for that.\" 12 words max. Output "
+               "ONLY that sentence, no tool calls, no markup.")
+    try:
+        ann = await loop.run_in_executor(None, lambda: kamil.client.chat(
+            [{"role": "system", "content": ann_sys}, {"role": "user", "content": user_message}],
+            max_tokens=40, temperature=0.7))
+        ann = (ann or "").strip().strip('"').split("\n")[0].strip() or "Okay, let me look into that."
+    except Exception:
+        ann = "Okay, let me look into that."
+    yield f"data: {json.dumps({'type': 'status', 'text': ann})}\n\n"
+    async for b64 in _synth(ann):
         yield f"data: {json.dumps({'type': 'audio', 'seq': 0, 'audio': b64})}\n\n"
 
     final_text = ""; vision_answer = ""

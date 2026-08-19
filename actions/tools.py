@@ -1165,16 +1165,38 @@ def _loads_lenient(raw: str):
         return None
 
 
+import re as _re_fn
+# Llama-style tool syntax some models emit as TEXT instead of native tool_calls:
+#   <function=list_directory><parameter=path>C:\...\prana</parameter></function>
+# Unparsed, it leaks into the answer AND the model loops (it never "sees" a result).
+_FUNC_TAG = _re_fn.compile(r'<function\s*=\s*([A-Za-z_]\w*)\s*>(.*?)(?:</function>|$)', _re_fn.DOTALL)
+_PARAM_TAG = _re_fn.compile(r'<parameter\s*=\s*([A-Za-z_]\w*)\s*>(.*?)(?:</parameter>|$)', _re_fn.DOTALL)
+
+
+def _parse_function_tags(response: str) -> list[dict]:
+    out = []
+    for m in _FUNC_TAG.finditer(response):
+        body = m.group(2)
+        params = {k: v.strip() for k, v in _PARAM_TAG.findall(body)}
+        out.append({"tool": m.group(1), "params": params})
+    return out
+
+
 def parse_tool_calls(response: str) -> list[dict]:
     """
     Parse tool calls from a model response, robust to how the model formats them:
-    fenced (```tool / ```json / ```), bare JSON, and — crucially — write_file/edit_file
-    calls whose content contains code, braces, or literal newlines. Boundary
-    detection is string-aware and JSON parsing is lenient. Each call is normalised
-    to {"tool", "params"}.
+    fenced (```tool / ```json / ```), bare JSON, the Llama <function=...> tag syntax,
+    and — crucially — write_file/edit_file calls whose content contains code, braces,
+    or literal newlines. Boundary detection is string-aware and JSON parsing is
+    lenient. Each call is normalised to {"tool", "params"}.
     """
     calls: list[dict] = []
     seen: set[str] = set()
+    for norm in _parse_function_tags(response):
+        key = json.dumps(norm, sort_keys=True)
+        if key not in seen:
+            seen.add(key)
+            calls.append(norm)
     for raw in _extract_json_objects(response):
         if '"tool"' not in raw and "'tool'" not in raw:
             continue

@@ -41,11 +41,17 @@ DEFAULT_MAX_RESULT_CHARS = 2000
 READ_FILE_CAP = int(os.getenv("KAMIL_READ_FILE_CAP", "32000"))
 
 _FENCE_RE = re.compile(r'```(?:tool|json)?\s*\n.*?```', re.DOTALL)
+# Llama <function=...> tag syntax + <tool_call> wrappers, so they never leak as prose.
+_FUNC_TAG_RE = re.compile(r'<function\s*=.*?(?:</function>|$)', re.DOTALL)
+_TOOLCALL_RE = re.compile(r'</?tool_call>|</?parameter[^>]*>|</?function[^>]*>', re.IGNORECASE)
 
 
 def strip_tool_blocks(text: str) -> str:
-    """Remove fenced tool blocks and bare top-level JSON tool objects from prose."""
+    """Remove fenced tool blocks, bare JSON tool objects, and Llama <function=...>
+    tag syntax from prose (so malformed tool calls aren't spoken/shown)."""
     text = _FENCE_RE.sub("", text)
+    text = _FUNC_TAG_RE.sub("", text)
+    text = _TOOLCALL_RE.sub("", text)
     # remove bare balanced-brace objects that carry a "tool" key
     out, i, n = [], 0, len(text)
     while i < n:

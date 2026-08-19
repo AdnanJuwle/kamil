@@ -662,6 +662,10 @@ class Orchestrator:
 
         if max_iters is None:
             max_iters = int(os.getenv("KAMIL_AGENT_MAX_ITERS", "10"))
+        if voice:
+            # A spoken task should be quick; cap iterations so a tool-confused small
+            # model can't spiral for minutes on a simple request.
+            max_iters = min(max_iters, int(os.getenv("KAMIL_VOICE_MAX_ITERS", "5")))
 
         self._maybe_compress()
         # Load the project the user named. The coding path uses a clean prompt (not
