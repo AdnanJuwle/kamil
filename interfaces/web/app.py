@@ -419,6 +419,37 @@ async def actions_clear():
     action_log.clear()
     return {"status": "cleared"}
 
+@app.get("/vision/status")
+async def vision_status():
+    """Is the vision tier usable, and why not if not. The app/device polls this."""
+    from core import vision_tier
+    return {"available": vision_tier.available(), "state": vision_tier.state(),
+            "label": vision_tier.label(), "reason": vision_tier.missing_reason()}
+
+@app.post("/vision")
+async def vision(image: UploadFile = File(...),
+                 question: str = Form("What is in this image? Describe it concisely and read any visible text.")):
+    """Look at ONE uploaded image with the local vision model — the endpoint a camera
+    or wearable pushes frames to. The frame is processed in memory and NOT stored."""
+    from core import vision_tier
+    if not vision_tier.available():
+        return {"ok": False, "error": vision_tier.missing_reason()}
+    data = await image.read()
+    if not vision_tier.ensure_loaded():
+        return {"ok": False, "error": "vision model failed to load in time"}
+    import mimetypes
+    mime = image.content_type or mimetypes.guess_type(image.filename or "")[0] or "image/jpeg"
+    from models.client import LlamaClient
+    client = LlamaClient(base_url=vision_tier.VISION_URL)
+    system = ("You are Kamil's eyes. Describe only what is actually visible, concisely. "
+              "Read any visible text verbatim. Never speculate about what you cannot see.")
+    try:
+        answer = client.describe_image(data, prompt=question, mime=mime, system=system)
+        vision_tier.mark_activity()
+        return {"ok": True, "answer": answer}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
 @app.post("/learn")
 async def learn(file: UploadFile = File(...), domain: str = Form("general")):
     """Upload a doc -> Kamil ingests it as a skill (immediately queryable)."""

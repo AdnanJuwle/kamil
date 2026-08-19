@@ -59,6 +59,31 @@ class LlamaClient:
         except httpx.HTTPStatusError as e:
             raise RuntimeError(f"Kamil: llama-server returned error {e.response.status_code}")
 
+    def describe_image(self, image_bytes: bytes, prompt: str = "Describe this image.",
+                       mime: str = "image/jpeg", system: str | None = None,
+                       temperature: float = 0.3, max_tokens: int = 512) -> str:
+        """Ask a multimodal (mmproj-enabled) llama-server about an image. Sends the
+        image as a base64 data-URI content part in the OpenAI vision format."""
+        import base64
+        b64 = base64.b64encode(image_bytes).decode("ascii")
+        messages = []
+        if system:
+            messages.append({"role": "system", "content": system})
+        messages.append({"role": "user", "content": [
+            {"type": "text", "text": prompt},
+            {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}},
+        ]})
+        payload = {"messages": messages, "temperature": temperature,
+                   "max_tokens": max_tokens, "stream": False}
+        try:
+            r = httpx.post(f"{self.base_url}/v1/chat/completions", json=payload, timeout=self.timeout)
+            r.raise_for_status()
+            return r.json()["choices"][0]["message"]["content"]
+        except httpx.ConnectError:
+            raise RuntimeError("Kamil: vision server is not running.")
+        except httpx.HTTPStatusError as e:
+            raise RuntimeError(f"Kamil: vision server returned error {e.response.status_code}")
+
     def chat_stream(self, messages: list[dict], temperature: float = DEFAULT_TEMPERATURE, max_tokens: int = DEFAULT_MAX_TOKENS) -> Generator[str, None, None]:
         payload = {
             "messages": messages,

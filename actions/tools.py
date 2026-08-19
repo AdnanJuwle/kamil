@@ -202,6 +202,40 @@ def _job_status(params: dict) -> "ToolResult":
                               "output_tail": tail})
 
 
+def _see(params: dict) -> "ToolResult":
+    """Look at an image file and answer a question about it, via the local vision tier."""
+    path = params.get("image_path") or params.get("path") or ""
+    question = (params.get("question") or
+                "What is in this image? Describe it concisely and read any visible text.")
+    if not os.path.isfile(path):
+        return ToolResult(success=False, tool="see", params=params, error=f"image not found: {path}")
+    from core import vision_tier
+    if not vision_tier.available():
+        return ToolResult(success=False, tool="see", params=params,
+                          error=f"vision unavailable: {vision_tier.missing_reason()}")
+    if not vision_tier.ensure_loaded():
+        return ToolResult(success=False, tool="see", params=params,
+                          error="vision model failed to load in time")
+    try:
+        with open(path, "rb") as f:
+            data = f.read()
+    except Exception as e:
+        return ToolResult(success=False, tool="see", params=params, error=f"couldn't read image: {e}")
+    import mimetypes
+    mime = mimetypes.guess_type(path)[0] or "image/jpeg"
+    from models.client import LlamaClient
+    client = LlamaClient(base_url=vision_tier.VISION_URL)
+    system = ("You are Kamil's eyes. Describe only what is actually visible, concretely and "
+              "concisely. Read any visible text verbatim. Never speculate about what you cannot see.")
+    try:
+        answer = client.describe_image(data, prompt=question, mime=mime, system=system)
+        vision_tier.mark_activity()
+        return ToolResult(success=True, tool="see", params=params,
+                          output={"answer": answer, "image": os.path.basename(path)})
+    except Exception as e:
+        return ToolResult(success=False, tool="see", params=params, error=str(e))
+
+
 def _is_shell_file_write(command: str) -> bool:
     """A shell command that writes/edits a file — heredoc, tee, sed -i, PowerShell
     writers, or a `> file` redirect. Files must go through write_file/edit_file (which
@@ -708,6 +742,18 @@ TOOLS: dict[str, Tool] = {
         ],
         permission=Permission.AUTO,
         execute=_job_status
+    ),
+    "see": Tool(
+        name="see",
+        description="Look at an image file and answer a question about it (local vision model). "
+                    "Use for photos, screenshots, camera frames — 'what is this', reading text/signs.",
+        params=[
+            ToolParam("image_path", "string", required=True, description="Path to the image file"),
+            ToolParam("question", "string", required=False,
+                      description="What to ask about the image", default="Describe this image.")
+        ],
+        permission=Permission.AUTO,
+        execute=_see
     ),
     "search_files": Tool(
         name="search_files",
