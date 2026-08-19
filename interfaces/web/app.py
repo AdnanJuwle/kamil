@@ -820,131 +820,150 @@ def _build_voice_messages(content: str) -> list[dict]:
     return [{"role": "system", "content": voice_system},
             {"role": "user", "content": content}]
 
+_SENT_BOUNDARY = re.compile(r'[.!?…]["\')\]]?\s|[:;]\s|\n')
+
+
+async def _synth(text: str):
+    """Yield base64 WAV chunks for one piece of text via Kokoro. Kept small (a
+    sentence) so audio can start playing before the whole reply is synthesised."""
+    spoken = clean_for_tts(text)
+    if not spoken.strip():
+        return
+    tts = get_tts()
+    async for samples, sr in tts.create_stream(spoken, voice=KAMIL_VOICE, speed=1.1, lang="en-us"):
+        buf = io.BytesIO(); sf.write(buf, samples, sr, format="WAV"); buf.seek(0)
+        yield base64.b64encode(buf.read()).decode()
+
+
+async def _stream_voice_conversation(user_message: str):
+    """A conversational spoken reply, STREAMED: generate tokens and synthesise +
+    emit audio sentence-by-sentence as they complete, so the voice starts on the
+    first sentence instead of waiting for the whole reply. Latency no longer scales
+    with reply length."""
+    import asyncio
+    loop = asyncio.get_event_loop()
+    q: asyncio.Queue = asyncio.Queue()
+    messages = _build_voice_messages(user_message)
+
+    def worker():
+        try:
+            for tok in kamil.client.chat_stream(messages, max_tokens=220, temperature=0.7):
+                loop.call_soon_threadsafe(q.put_nowait, ("tok", tok))
+        except Exception as e:
+            loop.call_soon_threadsafe(q.put_nowait, ("err", str(e)))
+        loop.call_soon_threadsafe(q.put_nowait, ("end", None))
+    loop.run_in_executor(None, worker)
+
+    seq = 0; full = ""; buf = ""
+    while True:
+        kind, val = await q.get()
+        if kind == "end":
+            break
+        if kind == "err":
+            yield f"data: {json.dumps({'type': 'error', 'error': val})}\n\n"
+            break
+        full += val; buf += val
+        yield f"data: {json.dumps({'type': 'text', 'text': full})}\n\n"
+        while True:
+            m = _SENT_BOUNDARY.search(buf)
+            if not m:
+                break
+            sentence, buf = buf[:m.end()], buf[m.end():]
+            if sentence.strip():
+                async for b64 in _synth(sentence):
+                    yield f"data: {json.dumps({'type': 'audio', 'seq': seq, 'audio': b64})}\n\n"; seq += 1
+    if buf.strip():
+        async for b64 in _synth(buf):
+            yield f"data: {json.dumps({'type': 'audio', 'seq': seq, 'audio': b64})}\n\n"; seq += 1
+    if full.strip():
+        kamil.history.append({"role": "user", "content": user_message})
+        kamil.history.append({"role": "assistant", "content": full})
+        save_history(kamil.history)
+    print(f"Voice (stream): {full[:80]}")
+    yield f"data: {json.dumps({'type': 'done'})}\n\n"
+    yield "data: [DONE]\n\n"
+
+
+async def _voice_reply_stream(user_message: str):
+    """The single spoken-reply pipeline for BOTH call modes. A real request (tools:
+    vision/web/files/actions) runs the agent for REAL — so 'open the camera' actually
+    looks instead of hallucinating. Everything else is a streamed conversational
+    reply. Audio always streams sentence-by-sentence."""
+    from core.orchestrator import looks_like_task
+    if not looks_like_task(user_message):
+        async for chunk in _stream_voice_conversation(user_message):
+            yield chunk
+        return
+
+    import asyncio
+    loop = asyncio.get_event_loop()
+    q: asyncio.Queue = asyncio.Queue()
+
+    def worker():
+        try:
+            for ev in kamil.chat_agent(user_message, voice=True):
+                loop.call_soon_threadsafe(q.put_nowait, ev)
+        except Exception as e:
+            loop.call_soon_threadsafe(q.put_nowait, {"type": "error", "error": str(e)})
+        loop.call_soon_threadsafe(q.put_nowait, None)
+    loop.run_in_executor(None, worker)
+
+    final_text = ""; vision_answer = ""; spoke_filler = False
+    while True:
+        ev = await q.get()
+        if ev is None:
+            break
+        t = ev.get("type")
+        if t in ("tool_call", "status") and not spoke_filler:
+            spoke_filler = True
+            yield f"data: {json.dumps({'type': 'status', 'text': 'working on it'})}\n\n"
+        elif t == "tool_result" and ev.get("tool") in ("see", "look") and ev.get("success"):
+            out = (ev.get("result") or {}).get("output") or {}
+            if out.get("answer"):
+                vision_answer = out["answer"]
+        elif t in ("text", "done", "max_iterations") and ev.get("text"):
+            final_text = ev["text"]
+        elif t == "awaiting_confirmation":
+            final_text = "That one needs your approval on screen before I can do it."
+        elif t == "error":
+            final_text = "Sorry, I ran into an error on that."
+    if vision_answer:
+        final_text = vision_answer
+    _ft = final_text.strip()
+    if _ft.startswith("{") and ('"parameters"' in _ft or '"params"' in _ft) and ('"name"' in _ft or '"tool"' in _ft):
+        final_text = "I got a bit tangled on that one — mind rephrasing?"
+    if not final_text:
+        final_text = "I couldn't complete that."
+    print(f"Voice (agent): {final_text[:100]}")
+    yield f"data: {json.dumps({'type': 'text', 'text': final_text})}\n\n"
+    # speak sentence-by-sentence so audio starts on sentence 1 (not after the whole paragraph)
+    seq = 0; buf = final_text
+    while True:
+        m = _SENT_BOUNDARY.search(buf)
+        if not m:
+            break
+        sentence, buf = buf[:m.end()], buf[m.end():]
+        if sentence.strip():
+            async for b64 in _synth(sentence):
+                yield f"data: {json.dumps({'type': 'audio', 'seq': seq, 'audio': b64})}\n\n"; seq += 1
+    if buf.strip():
+        async for b64 in _synth(buf):
+            yield f"data: {json.dumps({'type': 'audio', 'seq': seq, 'audio': b64})}\n\n"; seq += 1
+    yield f"data: {json.dumps({'type': 'done'})}\n\n"
+    yield "data: [DONE]\n\n"
+
+
 @app.post("/voice_agent_stream")
 async def voice_agent_stream(message: Message):
-    """Voice call in AGENT mode: run the tool-using agent on the spoken request
-    (read files, web search, run code), speak short status while it works, then
-    speak a concise result. This is the default call mode — most calls are real
-    requests, not chit-chat."""
-    import asyncio
-    from core.orchestrator import looks_like_task
-    # A greeting / chit-chat in an agent-mode call should NOT go to the tool agent
-    # (a small model handed the tool suite invents work — opens a project, writes a
-    # file). Only real requests get tools; everything else is a plain spoken reply.
-    use_agent = looks_like_task(message.content)
-
-    async def gen():
-        if not use_agent:
-            resp = kamil.client.chat(_build_voice_messages(message.content), max_tokens=160, temperature=0.7)
-            text = (resp or "").strip() or "Yeah?"
-            print(f"Voice (agent→chat): {text[:100]}")
-            kamil.history.append({"role": "user", "content": message.content})
-            kamil.history.append({"role": "assistant", "content": text})
-            save_history(kamil.history)
-            yield f"data: {json.dumps({'type': 'text', 'text': text})}\n\n"
-            spoken = clean_for_tts(text)
-            if spoken.strip():
-                tts = get_tts(); seq = 0
-                async for samples, sr in tts.create_stream(spoken, voice=KAMIL_VOICE, speed=1.1, lang="en-us"):
-                    buf = io.BytesIO(); sf.write(buf, samples, sr, format="WAV"); buf.seek(0)
-                    yield f"data: {json.dumps({'type': 'audio', 'seq': seq, 'audio': base64.b64encode(buf.read()).decode()})}\n\n"
-                    seq += 1
-            yield f"data: {json.dumps({'type': 'done'})}\n\n"
-            yield "data: [DONE]\n\n"
-            return
-
-        loop = asyncio.get_event_loop()
-        q: asyncio.Queue = asyncio.Queue()
-        def worker():
-            try:
-                for ev in kamil.chat_agent(message.content, voice=True):
-                    loop.call_soon_threadsafe(q.put_nowait, ev)
-            except Exception as e:
-                loop.call_soon_threadsafe(q.put_nowait, {"type": "error", "error": str(e)})
-            loop.call_soon_threadsafe(q.put_nowait, None)
-        loop.run_in_executor(None, worker)
-
-        final_text = ""
-        vision_answer = ""     # a see/look result is the answer for "what do you see"
-        spoke_filler = False
-        try:
-            while True:
-                ev = await q.get()
-                if ev is None:
-                    break
-                t = ev.get("type")
-                if t in ("tool_call", "status") and not spoke_filler:
-                    spoke_filler = True
-                    yield f"data: {json.dumps({'type': 'status', 'text': 'working on it'})}\n\n"
-                elif t == "tool_result" and ev.get("tool") in ("see", "look") and ev.get("success"):
-                    out = (ev.get("result") or {}).get("output") or {}
-                    if out.get("answer"):
-                        vision_answer = out["answer"]
-                elif t in ("text", "done", "max_iterations") and ev.get("text"):
-                    final_text = ev["text"]
-                elif t == "awaiting_confirmation":
-                    final_text = "That one needs your approval on screen before I can do it."
-                elif t == "error":
-                    final_text = "Sorry, I ran into an error on that."
-            # For a vision request, speak what Kamil actually SAW, not a filler closer.
-            if vision_answer:
-                final_text = vision_answer
-            # Never speak a leaked tool-call blob (a malformed {"name":..,"parameters":..}
-            # that didn't parse) — say a fallback instead of reading JSON aloud.
-            _ft = final_text.strip()
-            if _ft.startswith("{") and ('"parameters"' in _ft or '"params"' in _ft) and ('"name"' in _ft or '"tool"' in _ft):
-                final_text = "I got a bit tangled on that one — mind rephrasing?"
-            if not final_text:
-                final_text = "I couldn't complete that."
-            print(f"Voice (agent): {final_text[:100]}")
-            yield f"data: {json.dumps({'type': 'text', 'text': final_text})}\n\n"
-            spoken = clean_for_tts(final_text)
-            if spoken.strip():
-                tts = get_tts(); seq = 0
-                async for samples, sr in tts.create_stream(spoken, voice=KAMIL_VOICE, speed=1.1, lang="en-us"):
-                    buf = io.BytesIO(); sf.write(buf, samples, sr, format="WAV"); buf.seek(0)
-                    yield f"data: {json.dumps({'type': 'audio', 'seq': seq, 'audio': base64.b64encode(buf.read()).decode()})}\n\n"
-                    seq += 1
-            yield f"data: {json.dumps({'type': 'done'})}\n\n"
-            yield "data: [DONE]\n\n"
-        except Exception as e:
-            import traceback; traceback.print_exc()
-            yield f"data: {json.dumps({'type': 'error', 'error': str(e)})}\n\n"
-    return StreamingResponse(gen(), media_type="text/event-stream")
+    """Spoken reply for a call. Real requests run tools for real; chit-chat stays
+    conversational. Audio streams sentence-by-sentence (see _voice_reply_stream)."""
+    return StreamingResponse(_voice_reply_stream(message.content), media_type="text/event-stream")
 
 @app.post("/voice_chat_stream")
 async def voice_chat_stream(message: Message):
-    """Voice reply as an SSE stream: the text first, then Kokoro audio chunk by
-    chunk (create_stream) so playback starts on the first sentence instead of
-    waiting for the whole reply to synthesize. This is what makes voice feel fast."""
-    async def gen():
-        try:
-            resp = kamil.client.chat(_build_voice_messages(message.content), max_tokens=160, temperature=0.7)
-            text = (resp or "").strip() or "I'm having trouble forming a response on that right now. Try asking again."
-            print(f"Voice (stream): {text[:100]}")
-            kamil.history.append({"role": "user", "content": message.content})
-            kamil.history.append({"role": "assistant", "content": text})
-            save_history(kamil.history)
-            yield f"data: {json.dumps({'type': 'text', 'text': text})}\n\n"
-            spoken = clean_for_tts(text)
-            if spoken.strip():
-                tts = get_tts()
-                # Kokoro's native create_stream batches by phoneme count and trims
-                # silence between batches for seamless concatenation — so chunks
-                # play GAPLESS. (Manual per-sentence create() left a synth-lag gap
-                # between sentences.) Short replies come as one chunk; longer ones
-                # stream in contiguous batches.
-                seq = 0
-                async for samples, sr in tts.create_stream(spoken, voice=KAMIL_VOICE, speed=1.1, lang="en-us"):
-                    buf = io.BytesIO(); sf.write(buf, samples, sr, format="WAV"); buf.seek(0)
-                    yield f"data: {json.dumps({'type': 'audio', 'seq': seq, 'audio': base64.b64encode(buf.read()).decode()})}\n\n"
-                    seq += 1
-            yield f"data: {json.dumps({'type': 'done'})}\n\n"
-            yield "data: [DONE]\n\n"
-        except Exception as e:
-            import traceback; traceback.print_exc()
-            yield f"data: {json.dumps({'type': 'error', 'error': str(e)})}\n\n"
-    return StreamingResponse(gen(), media_type="text/event-stream")
+    """Same unified pipeline as the agent call — a task ('what do you see', 'open the
+    camera') actually uses the tool instead of hallucinating; else conversational."""
+    return StreamingResponse(_voice_reply_stream(message.content), media_type="text/event-stream")
 
 @app.post("/voice_chat")
 async def voice_chat(message: Message):

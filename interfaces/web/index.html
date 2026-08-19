@@ -957,6 +957,7 @@
   function callRespond(text) {
     return new Promise(async (resolve) => {
       const actx = call.actx; let nextStart = 0, scheduled = 0, lastEnd = 0, chain = Promise.resolve();
+      let replyBubble = null;   // one bubble per turn, updated as text streams in
       const endpoint = callMode === 'agent' ? '/voice_agent_stream' : '/voice_chat_stream';
       const sched = (b64) => { chain = chain.then(async () => {
         let ab; try { const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0)); ab = await actx.decodeAudioData(bytes.buffer); } catch { return; }
@@ -975,7 +976,7 @@
             if (!line.startsWith('data: ')) continue;
             const d = line.slice(6); if (d === '[DONE]') continue;
             let ev; try { ev = JSON.parse(d); } catch { continue; }
-            if (ev.type === 'text') { appendAssistant(ev.text || '', false); scrollBottom(); }
+            if (ev.type === 'text') { if (!replyBubble) replyBubble = appendAssistant('', false); replyBubble.innerHTML = mdToHtml(ev.text || ''); scrollBottom(); }
             else if (ev.type === 'status') { if (call) callStatus(ev.text + '…'); }
             else if (ev.type === 'audio') sched(ev.audio);
           }
@@ -1080,6 +1081,8 @@
     if (!d.thumb || d.status === 'idle') { box.hidden = true; return; }
     document.getElementById('seeing-thumb').src = d.thumb;
     document.getElementById('seeing-src').textContent = d.source || 'image';
+    // The card only CONFIRMS the frame Kamil is on — the description goes to chat,
+    // not here (keeps the panel uncluttered).
     const a = document.getElementById('seeing-a');
     if (d.status === 'seeing') {
       clearTimeout(_visionHideTimer);
@@ -1087,12 +1090,12 @@
       box.classList.add('live'); box.classList.remove('done');
       box.hidden = false;
     } else if (d.status === 'done') {
-      a.textContent = d.answer || '';
+      a.textContent = 'seen';
       box.classList.remove('live'); box.classList.add('done');
       box.hidden = false;
-      if (d.id !== _visionLastId) {   // a fresh result — linger, then fade
+      if (d.id !== _visionLastId) {   // fresh result — linger on the frame, then fade
         clearTimeout(_visionHideTimer);
-        _visionHideTimer = setTimeout(() => { box.hidden = true; }, 25000);
+        _visionHideTimer = setTimeout(() => { box.hidden = true; }, 12000);
       }
     }
     _visionLastId = d.id;
