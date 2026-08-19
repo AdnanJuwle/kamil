@@ -130,6 +130,8 @@ def serve_args(model_path: str, profile: dict, port: int) -> list[str]:
             "-ngl", str(profile.get("n_gpu_layers", 999)),
             "--flash-attn", "on",
             "--host", "127.0.0.1", "--port", str(port), "--log-disable"]
+    if os.getenv("KAMIL_JINJA", "1") == "1":
+        args.append("--jinja")   # model's chat template -> enables native tool-calling
     if profile.get("n_cpu_moe", 0) > 0:
         args += ["--n-cpu-moe", str(profile["n_cpu_moe"])]
     ct = profile.get("cache_type")

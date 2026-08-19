@@ -559,7 +559,8 @@ class Orchestrator:
         events (see actions/agent.py). Mutating tools pause for confirmation.
         `voice=True` tells it the final answer will be spoken aloud, so keep it short.
         """
-        from actions.agent import iter_agent
+        from actions.agent import iter_agent, iter_agent_native
+        from actions.tools import get_tools_openai_schema
 
         self._maybe_compress()
         # Load the project the user named. The coding path uses a clean prompt (not
@@ -577,7 +578,9 @@ class Orchestrator:
 
         # Decide the coding tier FIRST — the aligned coder needs a clean prompt.
         agent_max = int(os.getenv("KAMIL_AGENT_MAX_TOKENS", "6000"))
-        model_fn = lambda msgs: self.client.chat(msgs, max_tokens=agent_max)
+        agent_client = self.client   # fast 8B by default
+        agent_temp = 0.7
+        agent_sampling = None
         _heavy = None
         if os.getenv("KAMIL_AGENT_HEAVY", "1") == "1" and self._looks_like_coding(user_message):
             try:
@@ -586,13 +589,11 @@ class Orchestrator:
                     yield {"type": "status", "text": "spinning up the coding model…"}
                     if heavy_tier.ensure_loaded():
                         from models.client import LlamaClient
-                        _hc = LlamaClient(base_url=heavy_tier.HEAVY_URL)
-                        # Low temperature + repetition penalty for the coder: better
-                        # code and no rambling/looping on the quantized MoE port
-                        # (Odysseus does the same for large local MoE models).
-                        _coder_sampling = {"repeat_penalty": 1.1, "top_p": 0.9, "top_k": 40}
-                        model_fn = lambda msgs: _hc.chat(msgs, temperature=0.25,
-                                                         max_tokens=agent_max, sampling=_coder_sampling)
+                        agent_client = LlamaClient(base_url=heavy_tier.HEAVY_URL)
+                        # Low temp + repetition penalty: better code, no looping on the
+                        # quantized MoE port (Odysseus does the same for local MoE).
+                        agent_temp = 0.25
+                        agent_sampling = {"repeat_penalty": 1.1, "top_p": 0.9, "top_k": 40}
                         _heavy = heavy_tier
             except Exception as _e:
                 print(f"[orchestrator] heavy tier unavailable: {_e}")
@@ -613,10 +614,22 @@ class Orchestrator:
         # Hard cap so the prompt can't overflow the window and 400.
         messages = self._cap_prompt(messages, max_chars=int(os.getenv("KAMIL_AGENT_PROMPT_CHARS", "88000")))
 
+        # NATIVE tool-calling by default: pass the tool schema so the model returns
+        # structured tool_calls (reliable) instead of a hand-formatted ```tool fence.
+        # Falls back to text parsing inside the loop when the server doesn't emit them.
+        if os.getenv("KAMIL_NATIVE_TOOLS", "1") == "1":
+            tools_schema = get_tools_openai_schema()
+            chat_fn = lambda msgs: agent_client.chat_tools(
+                msgs, tools_schema, temperature=agent_temp, max_tokens=agent_max, sampling=agent_sampling)
+            loop = iter_agent_native(chat_fn, messages, max_iters=max_iters, needs_confirm=_agent_needs_confirm())
+        else:
+            model_fn = lambda msgs: agent_client.chat(
+                msgs, temperature=agent_temp, max_tokens=agent_max, sampling=agent_sampling)
+            loop = iter_agent(model_fn, messages, max_iters=max_iters, needs_confirm=_agent_needs_confirm())
+
         final_text = ""
         terminal = "done"
-        for event in iter_agent(model_fn, messages, max_iters=max_iters,
-                                needs_confirm=_agent_needs_confirm()):
+        for event in loop:
             if event.get("type") in ("text", "done", "max_iterations") and event.get("text"):
                 final_text = event["text"]
             terminal = event.get("type", terminal)
@@ -646,13 +659,40 @@ class Orchestrator:
         of (call, result_dict) the caller ran after the user approved/denied them.
         Yields the same event stream as chat_agent.
         """
-        from actions.agent import resume_agent as _resume
+        from actions.agent import resume_agent as _resume, resume_agent_native
+        from actions.tools import get_tools_openai_schema
 
-        model_fn = lambda msgs: self.client.chat(msgs)
+        # Re-derive the tier the task used, so a coding task resumes on the coder.
+        agent_max = int(os.getenv("KAMIL_AGENT_MAX_TOKENS", "6000"))
+        agent_client = self.client
+        agent_temp = 0.7
+        agent_sampling = None
+        if os.getenv("KAMIL_AGENT_HEAVY", "1") == "1" and self._looks_like_coding(user_message):
+            try:
+                from core import heavy_tier
+                if heavy_tier.available() and heavy_tier.ensure_loaded():
+                    from models.client import LlamaClient
+                    agent_client = LlamaClient(base_url=heavy_tier.HEAVY_URL)
+                    agent_temp = 0.25
+                    agent_sampling = {"repeat_penalty": 1.1, "top_p": 0.9, "top_k": 40}
+            except Exception as _e:
+                print(f"[orchestrator] resume heavy tier unavailable: {_e}")
+
+        if os.getenv("KAMIL_NATIVE_TOOLS", "1") == "1":
+            tools_schema = get_tools_openai_schema()
+            chat_fn = lambda msgs: agent_client.chat_tools(
+                msgs, tools_schema, temperature=agent_temp, max_tokens=agent_max, sampling=agent_sampling)
+            loop = resume_agent_native(chat_fn, transcript, executed, max_iters=max_iters,
+                                       needs_confirm=_agent_needs_confirm())
+        else:
+            model_fn = lambda msgs: agent_client.chat(
+                msgs, temperature=agent_temp, max_tokens=agent_max, sampling=agent_sampling)
+            loop = _resume(model_fn, transcript, executed, max_iters=max_iters,
+                           needs_confirm=_agent_needs_confirm())
+
         final_text = ""
         terminal = "done"
-        for event in _resume(model_fn, transcript, executed, max_iters=max_iters,
-                             needs_confirm=_agent_needs_confirm()):
+        for event in loop:
             if event.get("type") in ("text", "done", "max_iterations") and event.get("text"):
                 final_text = event["text"]
             terminal = event.get("type", terminal)

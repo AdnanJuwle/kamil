@@ -730,6 +730,37 @@ def get_tools_for_prompt() -> str:
     return "\n".join(lines)
 
 
+_JSON_TYPE = {"string": "string", "int": "integer", "number": "number",
+              "bool": "boolean", "list": "array"}
+
+
+def get_tools_openai_schema() -> list[dict]:
+    """Kamil's tools as OpenAI/JSON-schema function definitions, for NATIVE
+    tool-calling (passing `tools` to llama-server so the model returns structured
+    tool_calls instead of a hand-formatted ```tool fence)."""
+    out = []
+    for tool in TOOLS.values():
+        props, required = {}, []
+        for p in tool.params:
+            schema = {"type": _JSON_TYPE.get(p.type, "string")}
+            if p.description:
+                schema["description"] = p.description
+            if p.type == "list":
+                schema["items"] = {"type": "string"}
+            props[p.name] = schema
+            if p.required:
+                required.append(p.name)
+        out.append({
+            "type": "function",
+            "function": {
+                "name": tool.name,
+                "description": tool.description,
+                "parameters": {"type": "object", "properties": props, "required": required},
+            },
+        })
+    return out
+
+
 def validate_tool_call(tool_name: str, params: dict) -> tuple[bool, str]:
     """Validate a tool call against its schema."""
     if tool_name not in TOOLS:

@@ -35,6 +35,30 @@ class LlamaClient:
         except httpx.HTTPStatusError as e:
             raise RuntimeError(f"Kamil: llama-server returned error {e.response.status_code}")
 
+    def chat_tools(self, messages: list[dict], tools: list[dict],
+                   temperature: float = DEFAULT_TEMPERATURE, max_tokens: int = DEFAULT_MAX_TOKENS,
+                   sampling: dict | None = None) -> dict:
+        """Native tool-calling: pass OpenAI `tools`, return the assistant message
+        {"content": str|None, "tool_calls": [...]|None}. If the server rejects
+        `tools` (older build / no tool template), degrade to a plain completion so
+        the agent's text-parsing fallback still works."""
+        payload = {"messages": messages, "temperature": temperature,
+                   "max_tokens": max_tokens, "stream": False, "tools": tools}
+        if sampling:
+            payload.update(sampling)
+        try:
+            r = httpx.post(f"{self.base_url}/v1/chat/completions", json=payload, timeout=self.timeout)
+            if r.status_code in (400, 404, 500):
+                payload.pop("tools", None)   # server doesn't support tools — degrade
+                r = httpx.post(f"{self.base_url}/v1/chat/completions", json=payload, timeout=self.timeout)
+            r.raise_for_status()
+            msg = r.json()["choices"][0]["message"]
+            return {"content": msg.get("content"), "tool_calls": msg.get("tool_calls")}
+        except httpx.ConnectError:
+            raise RuntimeError("Kamil: llama-server is not running. Start it first.")
+        except httpx.HTTPStatusError as e:
+            raise RuntimeError(f"Kamil: llama-server returned error {e.response.status_code}")
+
     def chat_stream(self, messages: list[dict], temperature: float = DEFAULT_TEMPERATURE, max_tokens: int = DEFAULT_MAX_TOKENS) -> Generator[str, None, None]:
         payload = {
             "messages": messages,
