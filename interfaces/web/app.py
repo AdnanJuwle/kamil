@@ -157,6 +157,16 @@ def _warm_tts():
         print("Kokoro warmup done")
     except Exception as _e:
         print(f"Kokoro warmup failed: {_e}")
+    # If Orpheus is the active voice, preload its SNAC codec (CPU, no VRAM) so the
+    # first spoken reply doesn't pay the load cost. The 3B model loads on demand.
+    try:
+        if os.getenv("KAMIL_TTS", "kokoro").lower() == "orpheus":
+            from core import tts_tier, orpheus_tts
+            if tts_tier.available():
+                orpheus_tts.warm()
+                print("Orpheus SNAC warm done")
+    except Exception as _e:
+        print(f"Orpheus warm failed: {_e}")
 _thr.Thread(target=_warm_tts, daemon=True).start()
 
 # ── Heartbeat: Kamil's proactive presence ─────────────────────────
@@ -823,12 +833,40 @@ def _build_voice_messages(content: str) -> list[dict]:
 _SENT_BOUNDARY = re.compile(r'[.!?…]["\')\]]?\s|[:;]\s|\n')
 
 
+def _use_orpheus() -> bool:
+    """Orpheus is the voice when enabled AND its model is present; else fall back to
+    Kokoro so the app never goes mute if the GGUF isn't downloaded yet."""
+    if os.getenv("KAMIL_TTS", "kokoro").lower() != "orpheus":
+        return False
+    try:
+        from core import tts_tier
+        return tts_tier.available()
+    except Exception:
+        return False
+
+
 async def _synth(text: str):
-    """Yield base64 WAV chunks for one piece of text via Kokoro. Kept small (a
-    sentence) so audio can start playing before the whole reply is synthesised."""
+    """Yield base64 WAV chunks for one piece of text. Uses Orpheus (llama.cpp + SNAC,
+    on-demand tier) when available, else Kokoro. Kept small (a sentence) so audio can
+    start playing before the whole reply is synthesised."""
     spoken = clean_for_tts(text)
     if not spoken.strip():
         return
+    if _use_orpheus():
+        import asyncio
+        from core import tts_tier, orpheus_tts
+        loaded = await asyncio.get_event_loop().run_in_executor(None, tts_tier.ensure_loaded)
+        if loaded:
+            tts_tier.mark_activity()
+            got = False
+            async for pcm in orpheus_tts.stream(spoken):
+                got = True
+                buf = io.BytesIO(); sf.write(buf, pcm, orpheus_tts.SAMPLE_RATE, format="WAV"); buf.seek(0)
+                yield base64.b64encode(buf.read()).decode()
+            if got:
+                return
+            print("[tts] Orpheus produced no audio — falling back to Kokoro for this line")
+        # load failed / no audio → fall through to Kokoro
     tts = get_tts()
     async for samples, sr in tts.create_stream(spoken, voice=KAMIL_VOICE, speed=1.1, lang="en-us"):
         buf = io.BytesIO(); sf.write(buf, samples, sr, format="WAV"); buf.seek(0)
