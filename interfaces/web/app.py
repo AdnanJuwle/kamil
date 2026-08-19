@@ -166,7 +166,7 @@ def _warm_tts():
     # If Orpheus is the active voice, preload its SNAC codec (CPU, no VRAM) so the
     # first spoken reply doesn't pay the load cost. The 3B model loads on demand.
     try:
-        if os.getenv("KAMIL_TTS", "kokoro").lower() == "orpheus":
+        if os.getenv("KAMIL_TTS", "chatterbox").lower() == "orpheus":
             from core import tts_tier, orpheus_tts
             if tts_tier.available():
                 orpheus_tts.warm()
@@ -176,7 +176,7 @@ def _warm_tts():
     # If Chatterbox is the active voice, spin up its isolated server now so the first
     # call is warm (cold start is ~22s: separate process + model load).
     try:
-        if os.getenv("KAMIL_TTS", "kokoro").lower() == "chatterbox":
+        if os.getenv("KAMIL_TTS", "chatterbox").lower() == "chatterbox":
             from core import chatterbox_tier
             if chatterbox_tier.available():
                 print("Chatterbox: starting isolated server…")
@@ -864,7 +864,7 @@ _SENT_BOUNDARY = re.compile(r'[.!?…]["\')\]]?\s|[:;,]\s|\n')
 def _use_orpheus() -> bool:
     """Orpheus is the voice when enabled AND its model is present; else fall back to
     Kokoro so the app never goes mute if the GGUF isn't downloaded yet."""
-    if os.getenv("KAMIL_TTS", "kokoro").lower() != "orpheus":
+    if os.getenv("KAMIL_TTS", "chatterbox").lower() != "orpheus":
         return False
     try:
         from core import tts_tier
@@ -875,7 +875,7 @@ def _use_orpheus() -> bool:
 
 def _use_chatterbox() -> bool:
     """Chatterbox (isolated tts_env microservice) is the voice when enabled and set up."""
-    if os.getenv("KAMIL_TTS", "kokoro").lower() != "chatterbox":
+    if os.getenv("KAMIL_TTS", "chatterbox").lower() != "chatterbox":
         return False
     try:
         from core import chatterbox_tier
