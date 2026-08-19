@@ -41,3 +41,4 @@ librosa==0.11.0
 Resemblyzer==0.1.4             # speaker voiceprints (succession second factor)
 
 # ffmpeg must also be on PATH (used for webm→wav in transcription/enrollment).
+opencv-python

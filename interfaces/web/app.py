@@ -426,6 +426,13 @@ async def vision_status():
     return {"available": vision_tier.available(), "state": vision_tier.state(),
             "label": vision_tier.label(), "reason": vision_tier.missing_reason()}
 
+@app.get("/vision/current")
+async def vision_current():
+    """What Kamil is looking at right now (live thumbnail + question/answer). The
+    presence panel polls this to show the frame being analysed."""
+    from core import vision_live
+    return vision_live.current()
+
 @app.post("/vision")
 async def vision(image: UploadFile = File(...),
                  question: str = Form("What is in this image? Describe it concisely and read any visible text.")):
@@ -435,20 +442,13 @@ async def vision(image: UploadFile = File(...),
     if not vision_tier.available():
         return {"ok": False, "error": vision_tier.missing_reason()}
     data = await image.read()
-    if not vision_tier.ensure_loaded():
-        return {"ok": False, "error": "vision model failed to load in time"}
     import mimetypes
     mime = image.content_type or mimetypes.guess_type(image.filename or "")[0] or "image/jpeg"
-    from models.client import LlamaClient
-    client = LlamaClient(base_url=vision_tier.VISION_URL)
-    system = ("You are Kamil's eyes. Describe only what is actually visible, concisely. "
-              "Read any visible text verbatim. Never speculate about what you cannot see.")
-    try:
-        answer = client.describe_image(data, prompt=question, mime=mime, system=system)
-        vision_tier.mark_activity()
-        return {"ok": True, "answer": answer}
-    except Exception as e:
-        return {"ok": False, "error": str(e)}
+    from actions.tools import _vision_answer
+    answer, err = _vision_answer(data, question, image.filename or "upload", mime)
+    if err:
+        return {"ok": False, "error": err}
+    return {"ok": True, "answer": answer}
 
 @app.post("/learn")
 async def learn(file: UploadFile = File(...), domain: str = Form("general")):

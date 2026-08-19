@@ -211,6 +211,23 @@
   #p-state { font-family:var(--serif); font-style:italic; font-size:17px; color:var(--ink); margin-top:4px; min-height:26px; }
   #p-mood { font-family:var(--mono); font-size:10px; letter-spacing:.16em; text-transform:uppercase; color:var(--faint); margin-top:8px; }
   .lead { font-family:var(--mono); font-size:9.5px; letter-spacing:.2em; text-transform:uppercase; color:var(--faint); }
+  .seeing { margin-top:20px; width:100%; max-width:250px; display:flex; flex-direction:column; gap:9px; text-align:left; }
+  .seeing[hidden] { display:none; }
+  .seeing-body { display:grid; grid-template-columns:auto 1fr; gap:11px; align-items:start; padding:9px;
+    border-radius:11px; background:var(--raised-2); border:1px solid rgba(90,168,150,.32); }
+  .seeing.done .seeing-body { border-color:var(--line); }
+  #seeing-thumb { width:104px; height:auto; max-height:104px; object-fit:cover; border-radius:7px; display:block;
+    box-shadow:0 0 0 1px var(--line); }
+  .seeing.live #seeing-thumb { box-shadow:0 0 0 1px var(--machine), 0 0 12px rgba(90,168,150,.35); }
+  .seeing-txt { min-width:0; }
+  .seeing-src { font-family:var(--mono); font-size:9.5px; letter-spacing:.08em; text-transform:uppercase;
+    color:var(--machine); display:flex; align-items:center; gap:6px; }
+  .seeing.done .seeing-src { color:var(--faint); }
+  .seeing-src::before { content:''; width:6px; height:6px; border-radius:50%; background:var(--machine);
+    box-shadow:0 0 7px var(--machine); animation:pulse 1.4s ease-in-out infinite; }
+  .seeing.done .seeing-src::before { background:var(--faint); box-shadow:none; animation:none; }
+  .seeing-a { font-family:var(--serif); font-size:12.5px; line-height:1.45; color:#CFC6B6; margin-top:5px;
+    max-height:132px; overflow:auto; overflow-wrap:anywhere; }
   .bgwork { margin-top:22px; width:100%; max-width:250px; display:flex; flex-direction:column; gap:9px; text-align:left; }
   #bg-list { display:flex; flex-direction:column; gap:7px; }
   .bg-idle { font-family:var(--serif); font-style:italic; font-size:13px; color:var(--faint); }
@@ -375,6 +392,16 @@
       <div class="callbar">
         <span class="callmode" id="callmode" onclick="toggleCallMode()">◆ work call</span>
         <span class="callend" id="callend" onclick="endCall()" hidden>✕ end</span>
+      </div>
+      <div class="seeing" id="seeing" hidden>
+        <span class="lead">seeing</span>
+        <div class="seeing-body">
+          <img id="seeing-thumb" alt="what Kamil is looking at">
+          <div class="seeing-txt">
+            <div id="seeing-src" class="seeing-src"></div>
+            <div id="seeing-a" class="seeing-a"></div>
+          </div>
+        </div>
       </div>
       <div class="bgwork">
         <span class="lead">background</span>
@@ -1032,6 +1059,34 @@
     else if (!sendBtn.disabled) setPresence('at rest', 'present');
   }
 
+  // ── live vision preview: show what Kamil is looking at, in the presence column ──
+  let _visionLastId = -1, _visionHideTimer = null;
+  async function pollVisionLive() {
+    let d;
+    try { const r = await fetch('/vision/current'); if (!r.ok) return; d = await r.json(); }
+    catch { return; }
+    const box = document.getElementById('seeing');
+    if (!d.thumb || d.status === 'idle') { box.hidden = true; return; }
+    document.getElementById('seeing-thumb').src = d.thumb;
+    document.getElementById('seeing-src').textContent = d.source || 'image';
+    const a = document.getElementById('seeing-a');
+    if (d.status === 'seeing') {
+      clearTimeout(_visionHideTimer);
+      a.textContent = 'looking…';
+      box.classList.add('live'); box.classList.remove('done');
+      box.hidden = false;
+    } else if (d.status === 'done') {
+      a.textContent = d.answer || '';
+      box.classList.remove('live'); box.classList.add('done');
+      box.hidden = false;
+      if (d.id !== _visionLastId) {   // a fresh result — linger, then fade
+        clearTimeout(_visionHideTimer);
+        _visionHideTimer = setTimeout(() => { box.hidden = true; }, 25000);
+      }
+    }
+    _visionLastId = d.id;
+  }
+
   // Live tier + schedule state for the top bar.
   const CHIP_CLASS = { live:'chip live', warm:'chip warm', loading:'chip loading', off:'chip off' };
   async function pollStatus() {
@@ -1231,6 +1286,8 @@
   setInterval(pollPresence, 30000);
   pollActivity();
   setInterval(pollActivity, 3000);
+  pollVisionLive();
+  setInterval(pollVisionLive, 1200);
   pollStatus();
   setInterval(pollStatus, 8000);
   loadHolding();

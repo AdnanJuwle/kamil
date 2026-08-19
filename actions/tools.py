@@ -202,6 +202,30 @@ def _job_status(params: dict) -> "ToolResult":
                               "output_tail": tail})
 
 
+_VISION_SYS = ("You are Kamil's eyes. Describe only what is actually visible, concretely and "
+               "concisely. Read any visible text verbatim. Never speculate about what you cannot see.")
+
+
+def _vision_answer(data: bytes, question: str, source: str, mime: str = "image/jpeg"):
+    """Shared path for see/look: publish the live preview, run the VLM, publish the
+    result. Returns (answer, error) — exactly one is non-None."""
+    from core import vision_tier, vision_live
+    vision_live.set_seeing(vision_live.make_thumb(data, mime), question, source)
+    if not vision_tier.ensure_loaded():
+        vision_live.set_result("(vision model failed to load)")
+        return None, "vision model failed to load in time"
+    from models.client import LlamaClient
+    client = LlamaClient(base_url=vision_tier.VISION_URL)
+    try:
+        answer = client.describe_image(data, prompt=question, mime=mime, system=_VISION_SYS)
+        vision_tier.mark_activity()
+        vision_live.set_result(answer)
+        return answer, None
+    except Exception as e:
+        vision_live.set_result("(error reading image)")
+        return None, str(e)
+
+
 def _see(params: dict) -> "ToolResult":
     """Look at an image file and answer a question about it, via the local vision tier."""
     path = params.get("image_path") or params.get("path") or ""
@@ -213,9 +237,6 @@ def _see(params: dict) -> "ToolResult":
     if not vision_tier.available():
         return ToolResult(success=False, tool="see", params=params,
                           error=f"vision unavailable: {vision_tier.missing_reason()}")
-    if not vision_tier.ensure_loaded():
-        return ToolResult(success=False, tool="see", params=params,
-                          error="vision model failed to load in time")
     try:
         with open(path, "rb") as f:
             data = f.read()
@@ -223,17 +244,59 @@ def _see(params: dict) -> "ToolResult":
         return ToolResult(success=False, tool="see", params=params, error=f"couldn't read image: {e}")
     import mimetypes
     mime = mimetypes.guess_type(path)[0] or "image/jpeg"
-    from models.client import LlamaClient
-    client = LlamaClient(base_url=vision_tier.VISION_URL)
-    system = ("You are Kamil's eyes. Describe only what is actually visible, concretely and "
-              "concisely. Read any visible text verbatim. Never speculate about what you cannot see.")
+    answer, err = _vision_answer(data, question, os.path.basename(path), mime)
+    if err:
+        return ToolResult(success=False, tool="see", params=params, error=err)
+    return ToolResult(success=True, tool="see", params=params,
+                      output={"answer": answer, "image": os.path.basename(path)})
+
+
+def _capture_webcam(camera: int = 0):
+    """Grab one frame from a local webcam as JPEG bytes. (answer, error)."""
     try:
-        answer = client.describe_image(data, prompt=question, mime=mime, system=system)
-        vision_tier.mark_activity()
-        return ToolResult(success=True, tool="see", params=params,
-                          output={"answer": answer, "image": os.path.basename(path)})
+        import cv2
+    except Exception:
+        return None, "webcam capture needs opencv (pip install opencv-python)"
+    cap = None
+    try:
+        cap = cv2.VideoCapture(camera, cv2.CAP_DSHOW)   # DSHOW is fast/reliable on Windows
+        if not cap.isOpened():
+            cap.release()
+            cap = cv2.VideoCapture(camera)              # fall back to default backend
+        ok, frame = False, None
+        if cap.isOpened():
+            for _ in range(6):                          # discard warm-up frames (auto-exposure)
+                ok, frame = cap.read()
+        if not ok or frame is None:
+            return None, f"couldn't read from webcam {camera} (is it connected / not in use?)"
+        okj, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
+        if not okj:
+            return None, "failed to encode webcam frame"
+        return buf.tobytes(), None
     except Exception as e:
-        return ToolResult(success=False, tool="see", params=params, error=str(e))
+        return None, str(e)
+    finally:
+        if cap is not None:
+            cap.release()
+
+
+def _look(params: dict) -> "ToolResult":
+    """Capture the current webcam frame and answer a question about it — Kamil looking
+    with his own eyes. Use when Adnan asks what's in front of him / on the desk / etc."""
+    question = (params.get("question") or
+                "What am I looking at? Describe it concisely and read any visible text.")
+    camera = int(params.get("camera", 0))
+    from core import vision_tier
+    if not vision_tier.available():
+        return ToolResult(success=False, tool="look", params=params,
+                          error=f"vision unavailable: {vision_tier.missing_reason()}")
+    data, err = _capture_webcam(camera)
+    if err:
+        return ToolResult(success=False, tool="look", params=params, error=err)
+    answer, err = _vision_answer(data, question, "webcam", "image/jpeg")
+    if err:
+        return ToolResult(success=False, tool="look", params=params, error=err)
+    return ToolResult(success=True, tool="look", params=params, output={"answer": answer})
 
 
 def _is_shell_file_write(command: str) -> bool:
@@ -754,6 +817,20 @@ TOOLS: dict[str, Tool] = {
         ],
         permission=Permission.AUTO,
         execute=_see
+    ),
+    "look": Tool(
+        name="look",
+        description="Capture the current webcam frame and answer a question about it — Kamil "
+                    "looking with his own eyes. Use when asked what's in front of him / on the "
+                    "desk / 'what am I looking at' / 'what do you see'.",
+        params=[
+            ToolParam("question", "string", required=False,
+                      description="What to ask about what the camera sees",
+                      default="What am I looking at?"),
+            ToolParam("camera", "int", required=False, description="Camera index", default=0)
+        ],
+        permission=Permission.AUTO,
+        execute=_look
     ),
     "search_files": Tool(
         name="search_files",
