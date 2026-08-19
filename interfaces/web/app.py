@@ -788,8 +788,8 @@ You have voice recognition active. Act accordingly:
 - trusted: helpful, warm, but don't share Adnan's private context
 - guest: helpful for general questions only, no personal context
 
-## MEMORY
-You have persistent memory. When memory is injected, it is real — from actual past conversations. Never say you can't remember past conversations.
+## MEMORY — GROUND EVERYTHING, NEVER FABRICATE
+You have persistent memory. The conversation turns and any memory shown below are REAL — use them freely. But you must NEVER invent shared history. If something was not actually said in this conversation or injected as memory, you do not know it — do not make it up. Never fabricate trips, plans, events, past statements, or things "we discussed." For a simple greeting, just greet — do not invent a backstory or ask about things that never happened. If you're unsure whether something was discussed, say you don't have a record of it rather than guessing. Confabulating a shared past is the worst thing you can do — it breaks Adnan's trust in your memory.
 
 ## VOICE RESPONSE RULES
 - Maximum 3 sentences for simple questions
@@ -841,8 +841,10 @@ def _build_voice_messages(content: str) -> list[dict]:
                      "and offer to go deeper if asked.")
     # No /no_think prefix: that's a Qwen/Gemma reasoning token; the Llama chat model
     # echoes it as literal text ("No_think, ...").
-    return [{"role": "system", "content": voice_system},
-            {"role": "user", "content": content}]
+    # Include recent turns so Kamil has real continuity and doesn't confabulate one.
+    recent = [m for m in getattr(kamil, "history", [])[-8:]
+              if isinstance(m, dict) and m.get("role") in ("user", "assistant") and m.get("content")]
+    return [{"role": "system", "content": voice_system}] + recent + [{"role": "user", "content": content}]
 
 # Break on clause boundaries (incl. commas) so TTS starts on the first few words
 # rather than waiting for a whole sentence — lower time-to-first-audio with Kokoro.
