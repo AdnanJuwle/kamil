@@ -101,11 +101,13 @@ def clean_for_tts(text: str) -> str:
     text = re.sub(r'\*\*(.+?)\*\*', r'\1', text)
     text = re.sub(r'\*(.+?)\*', r'\1', text)
     text = re.sub(r'#{1,6}\s+', '', text)
-    text = re.sub(r'`{1,3}[^`]*`{1,3}', '', text)
+    text = re.sub(r'```[^`]*```', '', text)        # drop fenced code blocks (don't read code aloud)
+    text = re.sub(r'`([^`]+)`', r'\1', text)        # but KEEP inline-code content (filenames, paths)
     text = re.sub(r'\[([^\]]+)\]\([^\)]+\)', r'\1', text)
     text = re.sub(r'^\s*[-*+]\s+', '', text, flags=re.MULTILINE)
     text = re.sub(r'^\s*\d+\.\s+', '', text, flags=re.MULTILINE)
     text = re.sub(r'\n+', ' ', text)
+    text = text.replace('\\', ' ')                  # path separators → space so "core\agent.py" is spoken
     text = re.sub(r'\s+', ' ', text).strip()
     text = text.replace("Kamil", "Ka-mil").replace("kamil", "Ka-mil")
     return text
@@ -708,10 +710,30 @@ async def get_identity():
 
 # ------------------- Voice endpoints ---------------------
 
+def synthesize_active(text: str) -> bytes:
+    """Synthesize with the ACTIVE voice engine (Chatterbox when enabled + loaded,
+    else Kokoro). Used by /synthesize so the call's fixed goodbye matches the call
+    voice instead of jumping to Kokoro."""
+    cleaned = clean_for_tts(text)
+    if not cleaned.strip():
+        return b''
+    if os.getenv("KAMIL_TTS", "chatterbox").lower() == "chatterbox":
+        try:
+            from core import chatterbox_tier
+            if chatterbox_tier.available() and chatterbox_tier.ensure_loaded():
+                wav = chatterbox_tier.synth_wav(cleaned)
+                if wav:
+                    chatterbox_tier.mark_activity()
+                    return wav
+        except Exception as e:
+            print(f"[tts] synthesize_active: chatterbox failed ({e}) — Kokoro")
+    return synthesize_to_wav(text)
+
+
 @app.post("/synthesize")
 async def synthesize(message: Message):
     try:
-        audio_bytes = synthesize_to_wav(message.content)
+        audio_bytes = synthesize_active(message.content)
         return {"audio": base64.b64encode(audio_bytes).decode(), "format": "wav"}
     except Exception as e:
         import traceback
@@ -1061,16 +1083,24 @@ async def _voice_reply_stream(user_message: str):
         loop.call_soon_threadsafe(q.put_nowait, None)
     loop.run_in_executor(None, worker)
 
-    final_text = ""; vision_answer = ""; spoke_filler = False
+    # Announce out loud right away so there's no awkward silence while the tools run
+    # (they're already running in the worker thread). Feels like "let me look into that…"
+    import random
+    filler = random.choice([
+        "Okay, give me a sec.", "Sure, let me look into that.", "One moment, let me check.",
+        "Alright, taking a look now.", "Got it, checking that now.",
+    ])
+    yield f"data: {json.dumps({'type': 'status', 'text': filler})}\n\n"
+    async for b64 in _synth(filler):
+        yield f"data: {json.dumps({'type': 'audio', 'seq': 0, 'audio': b64})}\n\n"
+
+    final_text = ""; vision_answer = ""
     while True:
         ev = await q.get()
         if ev is None:
             break
         t = ev.get("type")
-        if t in ("tool_call", "status") and not spoke_filler:
-            spoke_filler = True
-            yield f"data: {json.dumps({'type': 'status', 'text': 'working on it'})}\n\n"
-        elif t == "tool_result" and ev.get("tool") in ("see", "look") and ev.get("success"):
+        if t == "tool_result" and ev.get("tool") in ("see", "look") and ev.get("success"):
             out = (ev.get("result") or {}).get("output") or {}
             if out.get("answer"):
                 vision_answer = out["answer"]
