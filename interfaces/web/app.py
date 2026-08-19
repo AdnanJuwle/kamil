@@ -37,7 +37,7 @@ import io
 
 KOKORO_MODEL = r"C:\kamil\voices\kokoro-v1.0.onnx"
 KOKORO_VOICES = r"C:\kamil\voices\voices-v1.0.bin"
-KAMIL_VOICE = "am_michael"
+KAMIL_VOICE = os.getenv("KAMIL_VOICE", "am_onyx")
 
 
 class EmcpRequest(BaseModel):
@@ -116,7 +116,7 @@ def synthesize_to_wav(text: str) -> bytes:
         print("Warning: synthesize_to_wav received empty text after cleaning")
         return b''
     tts = get_tts()
-    samples, rate = tts.create(text, voice=KAMIL_VOICE, speed=1.1, lang='en-us')
+    samples, rate = tts.create(text, voice=KAMIL_VOICE, speed=1.0, lang='en-us')
     buf = io.BytesIO()
     sf.write(buf, samples, rate, format='WAV')
     buf.seek(0)
@@ -886,7 +886,7 @@ async def _synth(text: str):
             print("[tts] Orpheus produced no audio — falling back to Kokoro for this line")
         # load failed / no audio → fall through to Kokoro
     tts = get_tts()
-    async for samples, sr in tts.create_stream(spoken, voice=KAMIL_VOICE, speed=1.1, lang="en-us"):
+    async for samples, sr in tts.create_stream(spoken, voice=KAMIL_VOICE, speed=1.0, lang="en-us"):
         buf = io.BytesIO(); sf.write(buf, samples, sr, format="WAV"); buf.seek(0)
         yield base64.b64encode(buf.read()).decode()
 
