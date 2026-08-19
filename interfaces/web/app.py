@@ -123,16 +123,22 @@ def synthesize_to_wav(text: str) -> bytes:
     return buf.read()
 # ------------------------------------------------------------
 
-# Whisper model (load once)
+# Whisper model (load once). faster-whisper (CTranslate2) on the GPU: CPU Whisper
+# was ~2s per turn of dead air — the real voice latency. GPU cuts it to ~0.2s.
+# CTranslate2 uses the cuDNN/cuBLAS DLLs already staged on PATH by _enable_cuda_tts;
+# no torch-CUDA needed. Falls back to CPU int8 cleanly.
 _whisper_model = None
 def get_whisper():
     global _whisper_model
     if _whisper_model is None:
-        import torch
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-        print(f"Loading Whisper on {device}...")
-        _whisper_model = whisper.load_model("small", device="cpu")
-        print("Whisper ready")
+        from faster_whisper import WhisperModel
+        size = os.getenv("KAMIL_WHISPER_SIZE", "small")
+        try:
+            _whisper_model = WhisperModel(size, device="cuda", compute_type="float16")
+            print(f"Whisper: {size} on CUDA (fp16)")
+        except Exception as e:
+            print(f"Whisper: CUDA unavailable ({str(e)[:80]}) — CPU int8")
+            _whisper_model = WhisperModel(size, device="cpu", compute_type="int8")
     return _whisper_model
 
 # Initialize everything in main process before uvicorn starts
@@ -830,7 +836,9 @@ def _build_voice_messages(content: str) -> list[dict]:
     return [{"role": "system", "content": voice_system},
             {"role": "user", "content": content}]
 
-_SENT_BOUNDARY = re.compile(r'[.!?…]["\')\]]?\s|[:;]\s|\n')
+# Break on clause boundaries (incl. commas) so TTS starts on the first few words
+# rather than waiting for a whole sentence — lower time-to-first-audio with Kokoro.
+_SENT_BOUNDARY = re.compile(r'[.!?…]["\')\]]?\s|[:;,]\s|\n')
 
 
 def _use_orpheus() -> bool:
@@ -1255,8 +1263,13 @@ async def transcribe(request: Request):
             tmp_path = f.name
 
         model = get_whisper()
-        result = model.transcribe(tmp_path, language="en", task="transcribe", fp16=False)
-        text = result["text"].strip()
+        # beam_size=1 (greedy) is fastest; segments are lazy, so materialise them.
+        segments, _info = model.transcribe(tmp_path, language="en", beam_size=1)
+        seg_list = list(segments)
+        text = "".join(s.text for s in seg_list).strip()
+        # shape a result compatible with _looks_like_silence (it reads no_speech_prob)
+        result = {"segments": [{"no_speech_prob": float(getattr(s, "no_speech_prob", 0.0) or 0.0)}
+                               for s in seg_list]}
         print(f"Transcribe result: '{text}'")
 
         # Load the clip once (for the silence guard + speaker id)
