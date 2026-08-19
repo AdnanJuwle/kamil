@@ -31,6 +31,24 @@ def _agent_needs_confirm():
     return requires_confirmation
 
 
+import re as _re_task
+_TASK_PATTERNS = [
+    r"\b(today|current|currently|latest|right now|recent(ly)?|price|prices|stock|weather|news|score|exchange rate|who won|as of)\b",
+    r"\b(create|write|make|build|generate|run|execute|fix|edit|change|add|implement|refactor|delete|remove|install|rename|move|append|look up|search for|google|find me|open the|read the|list the|grep|show me the|go through|check the|scan the|inspect|debug)\b",
+    r"\.(py|js|ts|jsx|tsx|md|json|txt|html|css|java|cpp|c|rs|go|sh|yml|yaml|toml|ino)\b",
+    r"\b(folder|directory|repo|repository|codebase|file|files|function|functions|class|classes|algorithm|algorithms|the code|which functions|what methods)\b",
+    r"\b(look at|take a look|what am i looking at|what do you see|can you see|what'?s in front of me|what'?s on (my|the) desk|use your (eyes|camera|webcam)|through the (camera|webcam)|check the (camera|webcam|image|photo|picture|screen)|describe (this|the|my) (image|photo|picture|screen|frame)|read (this|the) (sign|label|screen|text))\b",
+]
+
+
+def looks_like_task(text: str) -> bool:
+    """Heuristic: does this utterance want TOOLS (web/files/vision/actions), or is it
+    just conversation? Mirrors the frontend router so the voice call doesn't feed a
+    greeting to the tool agent (which then invents a coding task)."""
+    s = " " + _re_task.sub(r"\s+", " ", _re_task.sub(r"[^a-z0-9'./\- ]", " ", (text or "").lower())) + " "
+    return any(_re_task.search(p, s) for p in _TASK_PATTERNS)
+
+
 def _log_agent_event(event: dict) -> None:
     """Record executed tool calls to the persistent action log (for the Work tab)."""
     if event.get("type") == "tool_result":

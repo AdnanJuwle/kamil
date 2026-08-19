@@ -680,12 +680,21 @@
   }
   function handleAgentEvent(ev, ctx) {
     switch (ev.type) {
-      case 'text': if (ev.text) { closeWorkCard(ctx); ctx.bubble = appendAssistant(ev.text, false); } break;
+      case 'text':
+        if (ev.text && !(ctx.visionShown && ev.text.length < 60)) { closeWorkCard(ctx); ctx.bubble = appendAssistant(ev.text, false); }
+        break;
       case 'tool_call': addStep(ctx, ev.tool, ev.params); ctx.bubble = null; break;
-      case 'tool_result': finishStep(ctx, ev.success, ev.success ? '' : ((ev.result && ev.result.error) || 'failed')); break;
+      case 'tool_result':
+        finishStep(ctx, ev.success, ev.success ? '' : ((ev.result && ev.result.error) || 'failed'));
+        // vision tools: put what Kamil SAW into the chat, not just the right-panel card
+        if (ev.success && (ev.tool === 'see' || ev.tool === 'look')) {
+          const ans = ev.result && ev.result.output && ev.result.output.answer;
+          if (ans) { closeWorkCard(ctx); appendAssistant(ans, false); ctx.bubble = null; ctx.visionShown = true; }
+        }
+        break;
       case 'done':
         closeWorkCard(ctx, 'done');
-        if (ev.text) { if (ctx.bubble) ctx.bubble.innerHTML = mdToHtml(ev.text); else appendAssistant(ev.text, false); }
+        if (ev.text && !(ctx.visionShown && ev.text.length < 60)) { if (ctx.bubble) ctx.bubble.innerHTML = mdToHtml(ev.text); else appendAssistant(ev.text, false); }
         setPresence('at rest', 'present'); break;
       case 'max_iterations': closeWorkCard(ctx, 'stopped — step limit'); setPresence('at rest', 'present'); break;
       case 'awaiting_confirmation': appendSystem(ev.pending.length + ' action(s) need your approval'); break;

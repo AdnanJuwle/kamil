@@ -827,7 +827,32 @@ async def voice_agent_stream(message: Message):
     speak a concise result. This is the default call mode — most calls are real
     requests, not chit-chat."""
     import asyncio
+    from core.orchestrator import looks_like_task
+    # A greeting / chit-chat in an agent-mode call should NOT go to the tool agent
+    # (a small model handed the tool suite invents work — opens a project, writes a
+    # file). Only real requests get tools; everything else is a plain spoken reply.
+    use_agent = looks_like_task(message.content)
+
     async def gen():
+        if not use_agent:
+            resp = kamil.client.chat(_build_voice_messages(message.content), max_tokens=160, temperature=0.7)
+            text = (resp or "").strip() or "Yeah?"
+            print(f"Voice (agent→chat): {text[:100]}")
+            kamil.history.append({"role": "user", "content": message.content})
+            kamil.history.append({"role": "assistant", "content": text})
+            save_history(kamil.history)
+            yield f"data: {json.dumps({'type': 'text', 'text': text})}\n\n"
+            spoken = clean_for_tts(text)
+            if spoken.strip():
+                tts = get_tts(); seq = 0
+                async for samples, sr in tts.create_stream(spoken, voice=KAMIL_VOICE, speed=1.1, lang="en-us"):
+                    buf = io.BytesIO(); sf.write(buf, samples, sr, format="WAV"); buf.seek(0)
+                    yield f"data: {json.dumps({'type': 'audio', 'seq': seq, 'audio': base64.b64encode(buf.read()).decode()})}\n\n"
+                    seq += 1
+            yield f"data: {json.dumps({'type': 'done'})}\n\n"
+            yield "data: [DONE]\n\n"
+            return
+
         loop = asyncio.get_event_loop()
         q: asyncio.Queue = asyncio.Queue()
         def worker():
@@ -840,6 +865,7 @@ async def voice_agent_stream(message: Message):
         loop.run_in_executor(None, worker)
 
         final_text = ""
+        vision_answer = ""     # a see/look result is the answer for "what do you see"
         spoke_filler = False
         try:
             while True:
@@ -850,12 +876,24 @@ async def voice_agent_stream(message: Message):
                 if t in ("tool_call", "status") and not spoke_filler:
                     spoke_filler = True
                     yield f"data: {json.dumps({'type': 'status', 'text': 'working on it'})}\n\n"
+                elif t == "tool_result" and ev.get("tool") in ("see", "look") and ev.get("success"):
+                    out = (ev.get("result") or {}).get("output") or {}
+                    if out.get("answer"):
+                        vision_answer = out["answer"]
                 elif t in ("text", "done", "max_iterations") and ev.get("text"):
                     final_text = ev["text"]
                 elif t == "awaiting_confirmation":
                     final_text = "That one needs your approval on screen before I can do it."
                 elif t == "error":
                     final_text = "Sorry, I ran into an error on that."
+            # For a vision request, speak what Kamil actually SAW, not a filler closer.
+            if vision_answer:
+                final_text = vision_answer
+            # Never speak a leaked tool-call blob (a malformed {"name":..,"parameters":..}
+            # that didn't parse) — say a fallback instead of reading JSON aloud.
+            _ft = final_text.strip()
+            if _ft.startswith("{") and ('"parameters"' in _ft or '"params"' in _ft) and ('"name"' in _ft or '"tool"' in _ft):
+                final_text = "I got a bit tangled on that one — mind rephrasing?"
             if not final_text:
                 final_text = "I couldn't complete that."
             print(f"Voice (agent): {final_text[:100]}")
