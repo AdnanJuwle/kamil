@@ -252,6 +252,9 @@ def iter_agent_native(
             yield {"type": "done", "text": text}
             return
 
+        print(f"[agent] {'native' if used_native else 'text-fallback'} tool call: "
+              + ", ".join(c.get("tool", "?") for c in calls))
+
         def _confirm(c):
             try:
                 return needs_confirm(c["tool"], c.get("params", {}))
