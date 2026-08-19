@@ -173,6 +173,16 @@ def _warm_tts():
                 print("Orpheus SNAC warm done")
     except Exception as _e:
         print(f"Orpheus warm failed: {_e}")
+    # If Chatterbox is the active voice, spin up its isolated server now so the first
+    # call is warm (cold start is ~22s: separate process + model load).
+    try:
+        if os.getenv("KAMIL_TTS", "kokoro").lower() == "chatterbox":
+            from core import chatterbox_tier
+            if chatterbox_tier.available():
+                print("Chatterbox: starting isolated server…")
+                chatterbox_tier.ensure_loaded()
+    except Exception as _e:
+        print(f"Chatterbox warm failed: {_e}")
     # Warm faster-whisper's CUDA kernels (the first real transcription is otherwise
     # ~0.8s vs ~0.16s warm) with a short silent clip.
     try:
@@ -863,13 +873,35 @@ def _use_orpheus() -> bool:
         return False
 
 
+def _use_chatterbox() -> bool:
+    """Chatterbox (isolated tts_env microservice) is the voice when enabled and set up."""
+    if os.getenv("KAMIL_TTS", "kokoro").lower() != "chatterbox":
+        return False
+    try:
+        from core import chatterbox_tier
+        return chatterbox_tier.available()
+    except Exception:
+        return False
+
+
 async def _synth(text: str):
-    """Yield base64 WAV chunks for one piece of text. Uses Orpheus (llama.cpp + SNAC,
-    on-demand tier) when available, else Kokoro. Kept small (a sentence) so audio can
-    start playing before the whole reply is synthesised."""
+    """Yield base64 WAV chunks for one piece of text. Chatterbox (human, isolated
+    microservice) or Orpheus when enabled, else Kokoro (fast). Kept per-sentence so
+    audio starts before the whole reply is synthesised."""
     spoken = clean_for_tts(text)
     if not spoken.strip():
         return
+    if _use_chatterbox():
+        import asyncio
+        from core import chatterbox_tier
+        loop = asyncio.get_event_loop()
+        if await loop.run_in_executor(None, chatterbox_tier.ensure_loaded):
+            wav = await loop.run_in_executor(None, lambda: chatterbox_tier.synth_wav(spoken))
+            if wav:
+                chatterbox_tier.mark_activity()
+                yield base64.b64encode(wav).decode()
+                return
+            print("[tts] Chatterbox produced no audio — falling back to Kokoro for this line")
     if _use_orpheus():
         import asyncio
         from core import tts_tier, orpheus_tts
