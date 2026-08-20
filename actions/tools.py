@@ -299,6 +299,16 @@ def _look(params: dict) -> "ToolResult":
     return ToolResult(success=True, tool="look", params=params, output={"answer": answer})
 
 
+def _youtube(params: dict) -> "ToolResult":
+    """Fetch a YouTube video's transcript so you can summarize or answer about it."""
+    from actions import youtube
+    r = youtube.get_transcript(params.get("url", ""))
+    if not r.get("success"):
+        return ToolResult(success=False, tool="youtube", params=params, error=r.get("error", "failed"))
+    return ToolResult(success=True, tool="youtube", params=params,
+                      output={"video_id": r["video_id"], "transcript": r["text"], "chars": r["chars"]})
+
+
 def _learn_skill(params: dict) -> "ToolResult":
     """Save a reusable procedure (a 'skill') so Kamil can follow it next time."""
     from core import skill_store
@@ -820,6 +830,14 @@ TOOLS: dict[str, Tool] = {
         ],
         permission=Permission.AUTO,
         execute=_job_status
+    ),
+    "youtube": Tool(
+        name="youtube",
+        description="Fetch a YouTube video's transcript (from its link) so you can summarize it, "
+                    "pull key points, or answer questions about it. Use when Adnan shares a YouTube URL.",
+        params=[ToolParam("url", "string", required=True, description="The YouTube video URL or id")],
+        permission=Permission.AUTO,
+        execute=_youtube
     ),
     "learn_skill": Tool(
         name="learn_skill",
