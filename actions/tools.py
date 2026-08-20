@@ -736,8 +736,13 @@ def _read_lines(params: dict) -> ToolResult:
 
 
 def _web_search(params: dict) -> ToolResult:
-    from actions.web import search_web
-    res = search_web(params.get("query", ""), params.get("n", 5))
+    # Search AND read the top results' real pages, so the model gets actual page content
+    # from the links the search returned — instead of a bare snippet that tempts it to
+    # invent its own follow-up URLs to fetch. This is the general fix for URL-guessing:
+    # the content is already here, grounded in the real result links.
+    from actions.web import search_and_read
+    res = search_and_read(params.get("query", ""), n=params.get("n", 5),
+                          read_top=params.get("read_top", 3))
     if not res:
         return ToolResult(success=False, error="no results (or search unavailable)",
                           tool="web_search", params=params)
@@ -981,17 +986,18 @@ TOOLS: dict[str, Tool] = {
     ),
     "web_search": Tool(
         name="web_search",
-        description="Search the web for current information (news, docs, anything past your 2023 cutoff). Returns titles, urls, snippets.",
+        description="Search the web AND read the top results' pages. Returns each result's title, url, snippet, AND the readable page content for the top few — so you can answer directly from real page text without a separate fetch.",
         params=[
             ToolParam("query", "string", required=True, description="Search query"),
             ToolParam("n", "int", required=False, description="Number of results (default 5)"),
+            ToolParam("read_top", "int", required=False, description="How many top results to read full page content for (default 3)"),
         ],
         permission=Permission.AUTO,
         execute=_web_search
     ),
     "web_fetch": Tool(
         name="web_fetch",
-        description="Fetch a web page and return its readable text — use after web_search to read a result.",
+        description="Fetch ONE specific web page's readable text, by a real URL the user gave you or that appeared in web_search results. Do not invent URLs — web_search already returns page content for its top results.",
         params=[
             ToolParam("url", "string", required=True, description="The URL to read"),
             ToolParam("max_chars", "int", required=False, description="Max chars to return (default 6000)"),
