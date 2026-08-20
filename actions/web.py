@@ -52,6 +52,25 @@ def search_web(query: str, n: int = 5) -> list[dict]:
         return []
 
 
+def search_and_read(query: str, n: int = 5, read_top: int = 2, per_page_chars: int = 2200) -> list[dict]:
+    """Search, then FETCH the actual page content for the top results (not just the
+    snippet) so an answer can be grounded in real text. (Ported idea from Odysseus's
+    search service, which fetches + ranks content; Kamil only had snippets.) Each of
+    the top `read_top` results gets a 'content' field with readable page text."""
+    results = search_web(query, n)
+    for r in results[:read_top]:
+        url = r.get("url", "")
+        if not url:
+            continue
+        try:
+            page = fetch_url(url, max_chars=per_page_chars)
+            if page.get("success") and page.get("text"):
+                r["content"] = page["text"]
+        except Exception:
+            pass
+    return results
+
+
 def fetch_url(url: str, max_chars: int = 6000) -> dict:
     """Fetch a page and return its readable text (tags/scripts stripped)."""
     url = (url or "").strip()

@@ -1111,12 +1111,14 @@ async def _voice_reply_stream(user_message: str):
         query = user_message if _wants_web(user_message) else (_last_web_query or user_message)
         _last_voice_web = True; _last_web_query = query
         yield f"data: {json.dumps({'type': 'status', 'text': 'searching the web'})}\n\n"
-        from actions.tools import execute_tool
-        res = await loop.run_in_executor(None, lambda: execute_tool("web_search", {"query": query, "n": 5}))
-        r = res.to_dict() if hasattr(res, "to_dict") else dict(res)
-        results = (r.get("output") or {}).get("results") if r.get("success") else None
+        from actions.web import search_and_read
+        results = await loop.run_in_executor(None, lambda: search_and_read(query, n=5, read_top=2))
         if results:
-            ctx = "\n".join(f"- {x.get('title','')}: {x.get('snippet','')}" for x in results[:5])
+            # ground on fetched page CONTENT for the top hits, snippets for the rest
+            def _fmt(x):
+                body = (x.get("content") or x.get("snippet") or "")[:1500]
+                return f"- {x.get('title','')}: {body}"
+            ctx = "\n".join(_fmt(x) for x in results[:5])
             sys_p = ("You are Kamil answering by voice. Answer the question using ONLY the search "
                      "results below, in 1-2 short spoken sentences. Quote the actual figure/fact from "
                      "the results. If the results don't clearly contain the answer, say you couldn't "
