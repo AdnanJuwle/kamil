@@ -47,3 +47,6 @@ faster-whisper
 ctranslate2
 av
 youtube-transcript-api
+insightface
+onnx
+scikit-image

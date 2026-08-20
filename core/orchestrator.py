@@ -36,6 +36,8 @@ _TASK_PATTERNS = [
     r"\b(today|current|currently|latest|right now|recent(ly)?|price|prices|stock|weather|news|score|exchange rate|who won|as of)\b",
     r"\b(create|write|make|build|generate|run|execute|fix|edit|change|add|implement|refactor|delete|remove|install|rename|move|append|look up|search for|google|find me|open the|read the|list the|grep|show me the|go through|check the|scan the|inspect|debug)\b",
     r"(youtube\.com/|youtu\.be/)",
+    r"\b(remember|enroll|save|learn) (my |your |this |their )?face\b",
+    r"\b(deep|thorough) research\b|\bresearch (this|about|into)\b",
     r"\.(py|js|ts|jsx|tsx|md|json|txt|html|css|java|cpp|c|rs|go|sh|yml|yaml|toml|ino)\b",
     r"\b(folder|directory|repo|repository|codebase|file|files|function|functions|class|classes|algorithm|algorithms|the code|which functions|what methods)\b",
     r"\b(look at|take a look|what am i looking at|what do you see|can you see|what'?s in front of me|what'?s on (my|the) desk|use your (eyes|camera|webcam)|through the (camera|webcam)|check the (camera|webcam|image|photo|picture|screen)|describe (this|the|my) (image|photo|picture|screen|frame)|read (this|the) (sign|label|screen|text))\b",

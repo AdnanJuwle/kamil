@@ -505,6 +505,23 @@ async def research_endpoint(message: Message):
         yield "data: [DONE]\n\n"
     return StreamingResponse(gen(), media_type="text/event-stream")
 
+@app.get("/faces")
+async def faces_list():
+    """Enrolled faces Kamil can recognize by sight."""
+    from core import faces
+    return {"available": faces.available(), "faces": faces.list_faces() if faces.available() else []}
+
+@app.post("/faces/enroll")
+async def faces_enroll(name: str = Form(...), image: UploadFile = File(...)):
+    """Enroll a face from an uploaded photo (only the embedding is stored, not the image)."""
+    import asyncio
+    from core import faces
+    if not faces.available():
+        return {"ok": False, "error": "face recognition not installed"}
+    data = await image.read()
+    r = await asyncio.get_event_loop().run_in_executor(None, lambda: faces.enroll_face(name, data))
+    return {"ok": r.get("success", False), **({} if r.get("success") else {"error": r.get("error")})}
+
 @app.get("/vision/current")
 async def vision_current():
     """What Kamil is looking at right now (live thumbnail + question/answer). The

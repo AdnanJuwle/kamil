@@ -293,10 +293,38 @@ def _look(params: dict) -> "ToolResult":
     data, err = _capture_webcam(camera)
     if err:
         return ToolResult(success=False, tool="look", params=params, error=err)
+    # Face recognition (best-effort) — say who Kamil actually SEES, to pair with voice ID.
+    faces_note = ""
+    try:
+        from core import faces as _faces
+        if _faces.available():
+            names = [f["name"] for f in _faces.identify_faces(data) if f.get("name")]
+            if names:
+                faces_note = "I can see " + ", ".join(dict.fromkeys(names)) + ". "
+    except Exception:
+        pass
     answer, err = _vision_answer(data, question, "webcam", "image/jpeg")
     if err:
         return ToolResult(success=False, tool="look", params=params, error=err)
-    return ToolResult(success=True, tool="look", params=params, output={"answer": answer})
+    return ToolResult(success=True, tool="look", params=params, output={"answer": faces_note + answer})
+
+
+def _enroll_face(params: dict) -> "ToolResult":
+    """Capture the webcam and remember the person's face under a name."""
+    name = (params.get("name") or "").strip()
+    if not name:
+        return ToolResult(success=False, tool="enroll_face", params=params, error="need a name to enroll")
+    from core import faces
+    if not faces.available():
+        return ToolResult(success=False, tool="enroll_face", params=params,
+                          error="face recognition isn't set up (insightface not installed)")
+    data, err = _capture_webcam(int(params.get("camera", 0)))
+    if err:
+        return ToolResult(success=False, tool="enroll_face", params=params, error=err)
+    r = faces.enroll_face(name, data)
+    if not r.get("success"):
+        return ToolResult(success=False, tool="enroll_face", params=params, error=r.get("error"))
+    return ToolResult(success=True, tool="enroll_face", params=params, output={"enrolled": r["name"]})
 
 
 def _deep_research(params: dict) -> "ToolResult":
@@ -865,6 +893,17 @@ TOOLS: dict[str, Tool] = {
         params=[ToolParam("url", "string", required=True, description="The YouTube video URL or id")],
         permission=Permission.AUTO,
         execute=_youtube
+    ),
+    "enroll_face": Tool(
+        name="enroll_face",
+        description="Capture the webcam and remember someone's face under a name (e.g. Adnan says "
+                    "'remember my face'). Then 'look' will recognize them by sight.",
+        params=[
+            ToolParam("name", "string", required=True, description="Name to enroll the face under"),
+            ToolParam("camera", "int", required=False, description="Camera index", default=0),
+        ],
+        permission=Permission.AUTO,
+        execute=_enroll_face
     ),
     "learn_skill": Tool(
         name="learn_skill",
