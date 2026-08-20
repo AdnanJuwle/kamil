@@ -996,6 +996,31 @@ def _is_vision_followup(text: str) -> bool:
     return bool(_VISION_FOLLOWUP.match((text or "").strip()))
 
 
+# Web intent: questions needing CURRENT / real-world info. These MUST run a real
+# web_search — the 8B otherwise fabricates ("according to my search results…") which
+# is dangerous on a call where Adnan can't see that nothing was searched.
+_WEB_INTENT = re.compile(
+    r"\b(search (the )?web|google|look (it |this )?up|on the (web|internet)|"
+    r"current|latest|today|right now|this (week|month|year)|recent(ly)?|"
+    r"price of|rate of|exchange rate|stock|weather|news|who won|score|"
+    r"how much is|what'?s the (price|rate|cost|weather|news)|as of)\b", re.I)
+
+
+_WEB_FOLLOWUP_SUB = re.compile(r"\b(check again|search again|look again|any update|refresh|updated)\b", re.I)
+_WEB_FOLLOWUP_EXACT = re.compile(r"^\s*(and now|what about now|now|again)\s*[?.!]*\s*$", re.I)
+_last_voice_web = False
+_last_web_query = ""
+
+
+def _wants_web(text: str) -> bool:
+    return bool(_WEB_INTENT.search((text or "").lower()))
+
+
+def _is_web_followup(text: str) -> bool:
+    t = (text or "").strip()
+    return bool(_WEB_FOLLOWUP_SUB.search(t) or _WEB_FOLLOWUP_EXACT.match(t))
+
+
 async def _stream_voice_conversation(user_message: str):
     """A conversational spoken reply, STREAMED: generate tokens and synthesise +
     emit audio sentence-by-sentence as they complete, so the voice starts on the
@@ -1075,6 +1100,39 @@ async def _voice_reply_stream(user_message: str):
         return
 
     _last_voice_vision = False
+
+    # 1b) Direct web search — for current/real-world questions, run a REAL search and
+    # answer strictly from the results (never let the 8B invent facts on a call).
+    global _last_voice_web, _last_web_query
+    if _wants_web(user_message) or (_last_voice_web and _is_web_followup(user_message)):
+        query = user_message if _wants_web(user_message) else (_last_web_query or user_message)
+        _last_voice_web = True; _last_web_query = query
+        yield f"data: {json.dumps({'type': 'status', 'text': 'searching the web'})}\n\n"
+        from actions.tools import execute_tool
+        res = await loop.run_in_executor(None, lambda: execute_tool("web_search", {"query": query, "n": 5}))
+        r = res.to_dict() if hasattr(res, "to_dict") else dict(res)
+        results = (r.get("output") or {}).get("results") if r.get("success") else None
+        if results:
+            ctx = "\n".join(f"- {x.get('title','')}: {x.get('snippet','')}" for x in results[:5])
+            sys_p = ("You are Kamil answering by voice. Answer the question using ONLY the search "
+                     "results below, in 1-2 short spoken sentences. Quote the actual figure/fact from "
+                     "the results. If the results don't clearly contain the answer, say you couldn't "
+                     "find a reliable figure — do NOT invent numbers or facts.")
+            try:
+                ans = await loop.run_in_executor(None, lambda: kamil.client.chat(
+                    [{"role": "system", "content": sys_p},
+                     {"role": "user", "content": f"Question: {user_message}\n\nSearch results:\n{ctx}"}],
+                    max_tokens=120, temperature=0.2))
+                ans = (ans or "").strip() or "I found some results but couldn't pin down a clear answer."
+            except Exception:
+                ans = "I searched but had trouble reading the results."
+        else:
+            ans = "I couldn't get a live search result for that just now, so I won't guess."
+        print(f"Voice (web): {ans[:100]}")
+        async for chunk in _emit_spoken(ans):
+            yield chunk
+        return
+    _last_voice_web = False
 
     # 3) Conversational (not a task).
     if not looks_like_task(user_message):
