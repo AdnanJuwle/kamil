@@ -299,6 +299,21 @@ def _look(params: dict) -> "ToolResult":
     return ToolResult(success=True, tool="look", params=params, output={"answer": answer})
 
 
+def _learn_skill(params: dict) -> "ToolResult":
+    """Save a reusable procedure (a 'skill') so Kamil can follow it next time."""
+    from core import skill_store
+    name = (params.get("name") or "").strip()
+    if not name:
+        return ToolResult(success=False, tool="learn_skill", params=params, error="need a skill name")
+    if not (params.get("procedure") or "").strip():
+        return ToolResult(success=False, tool="learn_skill", params=params, error="need the procedure steps")
+    r = skill_store.save_skill(name, params.get("when_to_use", ""), params.get("procedure", ""),
+                               params.get("pitfalls", ""), params.get("verification", ""),
+                               params.get("tags"), source="taught")
+    return ToolResult(success=True, tool="learn_skill", params=params,
+                      output={"learned": r["name"], "slug": r["slug"]})
+
+
 def _is_shell_file_write(command: str) -> bool:
     """A shell command that writes/edits a file — heredoc, tee, sed -i, PowerShell
     writers, or a `> file` redirect. Files must go through write_file/edit_file (which
@@ -805,6 +820,21 @@ TOOLS: dict[str, Tool] = {
         ],
         permission=Permission.AUTO,
         execute=_job_status
+    ),
+    "learn_skill": Tool(
+        name="learn_skill",
+        description="Save a reusable procedure (a 'skill') so you can follow it next time — "
+                    "use after figuring out how to do a recurring task, or when Adnan teaches you one.",
+        params=[
+            ToolParam("name", "string", required=True, description="Short skill name"),
+            ToolParam("when_to_use", "string", required=False, description="Trigger conditions / when this applies"),
+            ToolParam("procedure", "string", required=True, description="The steps to follow (numbered or prose)"),
+            ToolParam("pitfalls", "string", required=False, description="Common failure modes + recovery"),
+            ToolParam("verification", "string", required=False, description="How to confirm success"),
+            ToolParam("tags", "string", required=False, description="Comma-separated tags"),
+        ],
+        permission=Permission.AUTO,
+        execute=_learn_skill
     ),
     "see": Tool(
         name="see",

@@ -211,12 +211,29 @@ class Orchestrator:
             "interfaces\\, models\\) — that's the real you. It is NOT Kamil_v1/Kamil_v2 in "
             "Documents\\repos (those are scratch projects). You can read your own code but not "
             "modify it; code13\\ is sealed. Never invent a 'get_code' tool — just read the files.\n"
+            "SKILLS: if any LEARNED SKILLS are shown below, follow that procedure. When you work "
+            "out how to do a recurring task (or Adnan says 'remember how to do this'), call "
+            "learn_skill to save it so you don't relearn it next time.\n"
             "VISION: when asked what you see / to look / open the camera, you MUST call the look "
             "tool FRESH every single time — even if you looked a moment ago. The scene changes; "
             "never answer from a previous frame or from memory. Report only what THIS look returns.\n"
             "CURRENT INFO: your training stops at 2023, so for ANY recent/news/price/'latest' "
             "question your FIRST action is web_search, then answer from what you found. Use it."
         )
+
+    def _skills_block(self, user_message: str) -> str:
+        """Relevant LEARNED skills (procedures) to follow for this request, if any."""
+        try:
+            from core import skill_store
+            skills = skill_store.retrieve(user_message, k=3)
+            if not skills:
+                return ""
+            parts = ["## LEARNED SKILLS — follow these procedures when they apply to the request"]
+            for s in skills:
+                parts.append(f"### {s['name']}\n{s['body'][:800]}")
+            return "\n\n".join(parts)
+        except Exception:
+            return ""
 
     def _project_code_context(self, user_message: str) -> str:
         """Project directory pointer + relevant symbol-indexed code, for the coder."""
@@ -686,6 +703,9 @@ class Orchestrator:
                 print(f"[orchestrator] Project named: {mentioned} — auto-switching (agent)")
                 self.open_project(mentioned)
         tool_instr = self._agent_tool_instructions()
+        _skills = self._skills_block(user_message)
+        if _skills:
+            tool_instr += "\n\n" + _skills
         voice_note = ("\n\n## SPOKEN ANSWER\nThis is a voice call. Do the work with tools, then "
                       "give your FINAL answer in at most 2-3 short spoken sentences — no markdown, "
                       "no lists, no code. Summarise what you did; offer details on screen if long.")
