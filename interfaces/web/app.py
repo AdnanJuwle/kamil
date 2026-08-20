@@ -1052,7 +1052,9 @@ def _is_vision_followup(text: str) -> bool:
 # web_search — the 8B otherwise fabricates ("according to my search results…") which
 # is dangerous on a call where Adnan can't see that nothing was searched.
 _WEB_INTENT = re.compile(
-    r"\b(search (the )?web|google|look (it |this )?up|on the (web|internet)|"
+    r"\b((web|internet|online) search|search (the )?(web|internet|online)|"
+    r"(access|use|check|browse|go on|hit|search on|look on|look) (the )?(web|internet|online)|"
+    r"google|look (it |this |that )?up|on the (web|internet)|search online|"
     r"current|latest|today|right now|this (week|month|year)|recent(ly)?|"
     r"price of|rate of|exchange rate|stock|weather|news|who won|score|"
     r"how much is|what'?s the (price|rate|cost|weather|news)|as of)\b", re.I)
@@ -1071,6 +1073,39 @@ def _wants_web(text: str) -> bool:
 def _is_web_followup(text: str) -> bool:
     t = (text or "").strip()
     return bool(_WEB_FOLLOWUP_SUB.search(t) or _WEB_FOLLOWUP_EXACT.match(t))
+
+
+def _web_grounded_answer(user_message: str, query: str = None, spoken: bool = False) -> str:
+    """Run a REAL web search and answer STRICTLY from the fetched results. Never lets
+    the model invent facts — if the results don't contain the answer, it says so.
+    Shared by the text (/chat) and voice paths so both are hallucination-proof."""
+    from actions.web import search_and_read
+    query = query or user_message
+    try:
+        results = search_and_read(query, n=5, read_top=2)
+    except Exception as e:
+        return f"I tried to search the web but the search failed ({e}). I won't guess an answer."
+    if not results:
+        return "I searched the web but got no usable results, so I won't guess."
+    def _fmt(x):
+        body = (x.get("content") or x.get("snippet") or "")[:1500]
+        return f"- {x.get('title','')} ({x.get('url','')}): {body}"
+    ctx = "\n".join(_fmt(x) for x in results[:5])
+    length = ("in 1-2 short spoken sentences" if spoken
+              else "in a few sentences, and cite which source (title/URL) each fact came from")
+    sys_p = ("You are Kamil. Answer the question using ONLY the web search results below, "
+             f"{length}. Quote the actual figures/facts from the results. If the results do "
+             "NOT clearly contain the answer, say plainly that you couldn't find reliable "
+             "information on it — do NOT invent facts, names, or numbers, and do NOT rely on "
+             "your training data for the answer.")
+    try:
+        ans = kamil.client.chat(
+            [{"role": "system", "content": sys_p},
+             {"role": "user", "content": f"Question: {user_message}\n\nSearch results:\n{ctx}"}],
+            max_tokens=(120 if spoken else 400), temperature=0.2)
+        return (ans or "").strip() or "I found results but couldn't pin down a clear answer."
+    except Exception:
+        return "I searched but had trouble reading the results."
 
 
 async def _stream_voice_conversation(user_message: str):
@@ -1160,28 +1195,7 @@ async def _voice_reply_stream(user_message: str):
         query = user_message if _wants_web(user_message) else (_last_web_query or user_message)
         _last_voice_web = True; _last_web_query = query
         yield f"data: {json.dumps({'type': 'status', 'text': 'searching the web'})}\n\n"
-        from actions.web import search_and_read
-        results = await loop.run_in_executor(None, lambda: search_and_read(query, n=5, read_top=2))
-        if results:
-            # ground on fetched page CONTENT for the top hits, snippets for the rest
-            def _fmt(x):
-                body = (x.get("content") or x.get("snippet") or "")[:1500]
-                return f"- {x.get('title','')}: {body}"
-            ctx = "\n".join(_fmt(x) for x in results[:5])
-            sys_p = ("You are Kamil answering by voice. Answer the question using ONLY the search "
-                     "results below, in 1-2 short spoken sentences. Quote the actual figure/fact from "
-                     "the results. If the results don't clearly contain the answer, say you couldn't "
-                     "find a reliable figure — do NOT invent numbers or facts.")
-            try:
-                ans = await loop.run_in_executor(None, lambda: kamil.client.chat(
-                    [{"role": "system", "content": sys_p},
-                     {"role": "user", "content": f"Question: {user_message}\n\nSearch results:\n{ctx}"}],
-                    max_tokens=120, temperature=0.2))
-                ans = (ans or "").strip() or "I found some results but couldn't pin down a clear answer."
-            except Exception:
-                ans = "I searched but had trouble reading the results."
-        else:
-            ans = "I couldn't get a live search result for that just now, so I won't guess."
+        ans = await loop.run_in_executor(None, lambda: _web_grounded_answer(user_message, query, spoken=True))
         print(f"Voice (web): {ans[:100]}")
         async for chunk in _emit_spoken(ans):
             yield chunk
@@ -1538,6 +1552,21 @@ async def transcribe(request: Request):
 # SSE generators
 def generate_sse(user_message: str):
     try:
+        # Web-intent → force a REAL search and answer strictly from results. The plain
+        # chat model will otherwise fabricate (e.g. inventing what "Odysseus" is), so
+        # we never let it free-associate on a question that asked for the web.
+        if _wants_web(user_message):
+            yield f"data: {json.dumps({'chunk': ''})}\n\n"
+            answer = _web_grounded_answer(user_message)
+            yield f"data: {json.dumps({'chunk': answer})}\n\n"
+            kamil.history.append({"role": "user", "content": user_message})
+            kamil.history.append({"role": "assistant", "content": answer})
+            try:
+                save_history(kamil.history)
+            except Exception:
+                pass
+            yield "data: [DONE]\n\n"
+            return
         for chunk in kamil.chat_stream(user_message):
             data = json.dumps({"chunk": chunk})
             yield f"data: {data}\n\n"
