@@ -32,24 +32,34 @@ def _agent_needs_confirm():
 
 
 import re as _re_task
-_TASK_PATTERNS = [
-    r"\b(today|current|currently|latest|right now|recent(ly)?|price|prices|stock|weather|news|score|exchange rate|who won|as of)\b",
-    r"\b(create|write|make|build|generate|run|execute|fix|edit|change|add|implement|refactor|delete|remove|install|rename|move|append|look up|search for|google|find me|open the|read the|list the|grep|show me the|go through|check the|scan the|inspect|debug)\b",
-    r"(youtube\.com/|youtu\.be/)",
-    r"\b(remember|enroll|save|learn) (my |your |this |their )?face\b",
-    r"\b(deep|thorough) research\b|\bresearch (this|about|into)\b",
-    r"\.(py|js|ts|jsx|tsx|md|json|txt|html|css|java|cpp|c|rs|go|sh|yml|yaml|toml|ino)\b",
-    r"\b(folder|directory|repo|repository|codebase|file|files|function|functions|class|classes|algorithm|algorithms|the code|which functions|what methods)\b",
-    r"\b(look at|take a look|what am i looking at|what do you see|can you see|what'?s in front of me|what'?s on (my|the) desk|use your (eyes|camera|webcam)|through the (camera|webcam)|check the (camera|webcam|image|photo|picture|screen)|describe (this|the|my) (image|photo|picture|screen|frame)|read (this|the) (sign|label|screen|text))\b",
+
+# Only UNMISTAKABLE small-talk (greetings, thanks, acks, pleasantries, farewells)
+# takes the tool-less fast path. We deliberately do NOT try to enumerate every kind of
+# "task" — that allowlist was fragile and let real requests (e.g. "check on web ...")
+# fall through to a tool-less reply that then fabricated. The tool-capable agent is the
+# DEFAULT; unknown input fails safe into it, where the model can ground with tools.
+_SMALLTALK_PATTERNS = [
+    r"^(hi|hello|hey|yo|sup|hiya|howdy|hey there|hi there|hello there|heya)( kamil)?$",
+    r"^good (morning|afternoon|evening|night)( kamil)?$",
+    r"^(thanks|thank you|thanks a lot|thank you so much|ty|thx|cheers|appreciate it|much appreciated)$",
+    r"^(ok|okay|k|kk|cool|nice|great|awesome|perfect|got it|sounds good|good|fine|alright|makes sense|understood|gotcha|no worries|np)$",
+    r"^(lol|lmao|ha(ha)+|he(he)+|nice one)$",
+    r"^(how are you|how are you doing|how'?s it going|how'?s things|what'?s up|whats up|wassup|you good|you there|are you there|you up)( kamil)?\??$",
+    r"^(who are you|what'?s your name|what is your name|whats your name|introduce yourself)\??$",
+    r"^(bye|goodbye|good night|see ya|see you|cya|later|talk later|talk to you later|good ?bye)( kamil)?$",
 ]
 
 
+def is_small_talk(text: str) -> bool:
+    """True only for unmistakable conversational filler — greetings/thanks/acks/farewells.
+    Everything else defaults to the tool-capable agent."""
+    s = (text or "").strip().lower().rstrip("!.,")
+    return any(_re_task.match(p, s) for p in _SMALLTALK_PATTERNS)
+
+
 def looks_like_task(text: str) -> bool:
-    """Heuristic: does this utterance want TOOLS (web/files/vision/actions), or is it
-    just conversation? Mirrors the frontend router so the voice call doesn't feed a
-    greeting to the tool agent (which then invents a coding task)."""
-    s = " " + _re_task.sub(r"\s+", " ", _re_task.sub(r"[^a-z0-9'./\- ]", " ", (text or "").lower())) + " "
-    return any(_re_task.search(p, s) for p in _TASK_PATTERNS)
+    """Route gate: anything that ISN'T pure small-talk goes to the tool agent."""
+    return not is_small_talk(text)
 
 
 def _log_agent_event(event: dict) -> None:

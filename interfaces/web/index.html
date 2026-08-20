@@ -515,21 +515,21 @@
   // chat? Tasks and anything needing current info go through the agent loop, which
   // actually reads files, writes/runs code, spins up the coding model, and web
   // searches — instead of the model just describing what it would do.
-  function looksLikeTask(t) {
-    const s = ' ' + t.toLowerCase().replace(/[^a-z0-9'./\- ]/g, ' ').replace(/\s+/g, ' ') + ' ';
-    // recent / real-world info -> web search
-    if (/\b(today|current|currently|latest|right now|this (week|month|year)|recent(ly)?|price|prices|stock|weather|news|score|exchange rate|dollar|usd|inr|euro|who won|as of)\b/.test(s)) return true;
-    // action verbs (do the thing)
-    if (/\b(create|write|make|build|generate|run|execute|fix|edit|change|add|implement|refactor|delete|remove|install|rename|move|append|look up|search for|google|find me|open the|read the|list the|grep|show me the|go through|check the|scan the|inspect|debug)\b/.test(s)) return true;
-    // vision -> Kamil's eyes (see/look tools live in agent mode)
-    if (/\b(look at|take a look|what am i looking at|what do you see|can you see|what'?s in front of me|what'?s on (my|the) desk|use your (eyes|camera|webcam)|through the (camera|webcam)|check the (camera|webcam|image|photo|picture|screen)|describe (this|the|my) (image|photo|picture|screen|frame)|read (this|the) (sign|label|screen|text))\b/.test(s)) return true;
-    // youtube link -> transcript tool; face enroll -> agent; deep research
-    if (/(youtube\.com\/|youtu\.be\/)/.test(s)) return true;
-    if (/\b(remember|enroll|save|learn) (my |your |this |their )?face\b/.test(s)) return true;
-    if (/\b(deep|thorough) research\b|\bresearch (this|about|into)\b/.test(s)) return true;
-    // codebase / files
-    if (/\.(py|js|ts|jsx|tsx|md|json|txt|html|css|java|cpp|c|rs|go|sh|yml|yaml|toml|ino)\b/.test(s)) return true;
-    if (/\b(folder|directory|repo|repository|codebase|file|files|function|functions|class|classes|algorithm|algorithms|the code|which functions|what methods)\b/.test(s)) return true;
+  // We do NOT try to enumerate every kind of "task" (that allowlist was fragile and
+  // let real requests — e.g. "check on web ..." — fall through to tool-less chat, which
+  // then fabricated). Instead the tool-capable agent is the DEFAULT for everything, and
+  // only unmistakable small-talk takes the fast, tool-less chat path. Unknown input
+  // fails safe: into the agent, where the model can ground with tools.
+  function isSmallTalk(t) {
+    const s = t.toLowerCase().trim().replace(/[!.,]+$/, '');
+    if (/^(hi|hello|hey|yo|sup|hiya|howdy|hey there|hi there|hello there|heya)( kamil)?$/.test(s)) return true;
+    if (/^good (morning|afternoon|evening|night)( kamil)?$/.test(s)) return true;
+    if (/^(thanks|thank you|thanks a lot|thank you so much|ty|thx|cheers|appreciate it|much appreciated)$/.test(s)) return true;
+    if (/^(ok|okay|k|kk|cool|nice|great|awesome|perfect|got it|sounds good|good|fine|alright|makes sense|understood|gotcha|no worries|np)$/.test(s)) return true;
+    if (/^(lol|lmao|ha(ha)+|he(he)+|nice one)$/.test(s)) return true;
+    if (/^(how are you|how are you doing|how'?s it going|how'?s things|what'?s up|whats up|wassup|you good|you there|are you there|you up)( kamil)?\??$/.test(s)) return true;
+    if (/^(who are you|what'?s your name|what is your name|whats your name|introduce yourself)\??$/.test(s)) return true;
+    if (/^(bye|goodbye|good night|see ya|see you|cya|later|talk later|talk to you later|good ?bye)( kamil)?$/.test(s)) return true;
     return false;
   }
 
@@ -552,11 +552,13 @@
     if (text.startsWith('/council')) { lastRoute='chat'; await sendCouncil(text.slice(8).trim()); setDisabled(false); inputEl.focus(); return; }
     if (text.startsWith('/agent')) { lastRoute='agent'; await sendAgent(text.slice(6).trim()); setDisabled(false); inputEl.focus(); return; }
     if (text.startsWith('/chat')) { lastRoute='chat'; return plainChat(text.slice(5).trim()); }
-    if (looksLikeTask(text) || (lastRoute === 'agent' && isContinuation(text))) {
-      lastRoute = 'agent'; await sendAgent(text); setDisabled(false); inputEl.focus(); return;
+    // Default to the tool-capable agent. Only pure small-talk (that isn't a follow-up
+    // to an ongoing agent task) takes the tool-less chat fast-path.
+    if (isSmallTalk(text) && !(lastRoute === 'agent' && isContinuation(text))) {
+      lastRoute = 'chat';
+      return plainChat(text);
     }
-    lastRoute = 'chat';
-    return plainChat(text);
+    lastRoute = 'agent'; await sendAgent(text); setDisabled(false); inputEl.focus(); return;
   }
 
   async function plainChat(text) {
