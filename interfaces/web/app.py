@@ -1158,52 +1158,18 @@ async def _stream_voice_conversation(user_message: str):
 
 
 async def _voice_reply_stream(user_message: str):
-    """The single spoken-reply pipeline for BOTH call modes.
-    1. An explicit LOOK request captures a FRESH frame directly (bypassing the model's
-       flaky tool-choice, which in a call answers from a past frame / memory).
-    2. Other real requests run the tool agent.
-    3. Everything else is a streamed conversational reply.
-    Audio always streams sentence-by-sentence."""
-    global _last_voice_vision
-    from core.orchestrator import looks_like_task
+    """The single spoken-reply pipeline for BOTH call modes. Routes exactly like the text
+    path: pure small-talk gets a fast tool-less spoken reply; everything else goes through
+    the tool-capable agent, which calls look / web_search / read_file itself. No per-intent
+    fast-paths — vision and web are just tools the model chooses, so voice can't answer a
+    'what do you see' from a stale frame or fabricate a web fact. Audio streams sentence
+    by sentence either way."""
+    from core.orchestrator import is_small_talk
     import asyncio
     loop = asyncio.get_event_loop()
 
-    # 1) Direct vision — a fresh capture every time.
-    if _wants_vision(user_message) or (_last_voice_vision and _is_vision_followup(user_message)):
-        _last_voice_vision = True
-        question = user_message if _wants_vision(user_message) else "What do you see right now? Describe it concisely."
-        yield f"data: {json.dumps({'type': 'status', 'text': 'looking'})}\n\n"
-        from actions.tools import execute_tool
-        res = await loop.run_in_executor(None, lambda: execute_tool("look", {"question": question}))
-        r = res.to_dict() if hasattr(res, "to_dict") else dict(res)
-        if r.get("success"):
-            answer = (r.get("output") or {}).get("answer") or "I couldn't quite make it out."
-        else:
-            answer = "I couldn't get a look through the camera just now."
-        print(f"Voice (look): {answer[:100]}")
-        async for chunk in _emit_spoken(answer):
-            yield chunk
-        return
-
-    _last_voice_vision = False
-
-    # 1b) Direct web search — for current/real-world questions, run a REAL search and
-    # answer strictly from the results (never let the 8B invent facts on a call).
-    global _last_voice_web, _last_web_query
-    if _wants_web(user_message) or (_last_voice_web and _is_web_followup(user_message)):
-        query = user_message if _wants_web(user_message) else (_last_web_query or user_message)
-        _last_voice_web = True; _last_web_query = query
-        yield f"data: {json.dumps({'type': 'status', 'text': 'searching the web'})}\n\n"
-        ans = await loop.run_in_executor(None, lambda: _web_grounded_answer(user_message, query, spoken=True))
-        print(f"Voice (web): {ans[:100]}")
-        async for chunk in _emit_spoken(ans):
-            yield chunk
-        return
-    _last_voice_web = False
-
-    # 3) Conversational (not a task).
-    if not looks_like_task(user_message):
+    # Small-talk → fast conversational stream (no tools, no agent spin-up).
+    if is_small_talk(user_message):
         async for chunk in _stream_voice_conversation(user_message):
             yield chunk
         return
