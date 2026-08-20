@@ -78,6 +78,24 @@ def _as_dict(result) -> dict:
     return result.to_dict() if hasattr(result, "to_dict") else dict(result)
 
 
+_TOOL_NAME_RE = (r"web_search|web_fetch|read_file|read_lines|list_dir|look|see|shell|"
+                 r"write_file|edit_file|youtube|deep_research|open_project|list_projects")
+# "let's call web_fetch", "I'll now search the web", "let me read the file", "next I will
+# use the X tool" — an announced action with no actual tool call in the same turn.
+_UNFIRED_TOOL_RE = re.compile(
+    r"\b(let'?s|let me|i'?ll|i will|i'?m going to|going to|i should|next,? i|now i|"
+    r"let me now)\b[^.!?\n]*\b(call|use|run|invoke|search|fetch|read|check|look)\b"
+    r"[^.!?\n]*(" + _TOOL_NAME_RE + r"|\btool\b|\bweb\b)",
+    re.IGNORECASE)
+
+
+def _announces_unfired_tool(text: str) -> bool:
+    """True if the prose announces an imminent tool call that wasn't actually emitted."""
+    if not text or len(text) > 600:   # a real final answer is rarely a one-line announcement
+        return False
+    return bool(_UNFIRED_TOOL_RE.search(text))
+
+
 def _format_results(results: list[tuple[dict, dict]], max_chars: int) -> str:
     """Render executed tool results into a message the model reads next. read_file
     is rendered as clean, fuller file content (the model must SEE a file to edit it)
@@ -242,6 +260,7 @@ def iter_agent_native(
     iter_agent. Same events; same confirm/pause semantics."""
     messages = list(messages)
     last_text = ""
+    nudged = False
 
     for _ in range(max_iters):
         try:
@@ -261,6 +280,18 @@ def iter_agent_native(
             yield {"type": "text", "text": text}
 
         if not calls:
+            # The weak model sometimes ANNOUNCES a tool call in prose ("let's call
+            # web_fetch to read the first result") without actually emitting one, then
+            # we'd treat that as the final answer and stall mid-task. Nudge it once to
+            # actually fire the call instead of ending the turn.
+            if not nudged and _announces_unfired_tool(text):
+                nudged = True
+                messages.append(_assistant_turn(used_native, content, native_calls))
+                messages.append({"role": "user", "content":
+                    "You described a tool call but didn't actually emit one. Emit the tool "
+                    "call now as a real tool/function call — do not just say you will. If you "
+                    "already have what you need, give the final answer instead."})
+                continue
             yield {"type": "done", "text": text}
             return
 
