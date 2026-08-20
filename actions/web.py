@@ -95,9 +95,14 @@ def fetch_url(url: str, max_chars: int = 6000) -> dict:
         return {"success": False, "error": "url must start with http(s)://"}
     try:
         r = httpx.get(url, headers={"User-Agent": _UA}, timeout=20, follow_redirects=True)
-        html = r.text
     except Exception as e:
         return {"success": False, "error": str(e)}
+    # An HTTP error page (404/403/...) still has a body; without this the model reads a
+    # GitHub "404" page as if it were real content and keeps guessing more URLs.
+    if r.status_code >= 400:
+        return {"success": False, "url": url, "status": r.status_code,
+                "error": f"HTTP {r.status_code} for {url} — the page does not exist or is not accessible"}
+    html = r.text
     html = re.sub(r'(?is)<(script|style|noscript)\b[^>]*>.*?</\1>', ' ', html)
     text = re.sub(r'(?s)<[^>]+>', ' ', html)
     text = re.sub(r'&(?:nbsp|amp|lt|gt|quot|#\d+);', ' ', text)

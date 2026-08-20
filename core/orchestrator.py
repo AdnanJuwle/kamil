@@ -239,6 +239,10 @@ class Orchestrator:
             "interfaces\\, models\\) — that's the real you. It is NOT Kamil_v1/Kamil_v2 in "
             "Documents\\repos (those are scratch projects). You can read your own code but not "
             "modify it; code13\\ is sealed. Never invent a 'get_code' tool — just read the files.\n"
+            "ODYSSEUS: a reference copy of Odysseus (the other local AI system you get compared to) "
+            "is vendored on THIS machine at C:\\kamil\\reference\\odysseus. To compare yourself to "
+            "Odysseus, list_directory + read_file those local files — do NOT web_fetch GitHub or guess "
+            "repo URLs for it; the real source is right there on disk.\n"
             "SKILLS: if any LEARNED SKILLS are shown below, follow that procedure. When you work "
             "out how to do a recurring task (or Adnan says 'remember how to do this'), call "
             "learn_skill to save it so you don't relearn it next time.\n"
@@ -251,7 +255,11 @@ class Orchestrator:
             "what you found — never from a half-remembered guess. web_search is available to you "
             "right now; never tell the user you can't search. Do NOT use shell/python/curl to "
             "scrape the web — use web_search/web_fetch. If a search returns nothing usable, say so "
-            "plainly rather than inventing an answer."
+            "plainly rather than inventing an answer.\n"
+            "URLS: only web_fetch a URL that came from a web_search result or that the user gave "
+            "you. NEVER invent or guess a URL (a github.com/... or raw.githubusercontent.com/... "
+            "path you assume exists). If a fetch fails, do NOT try made-up variations — web_search "
+            "for the real link, or stop and say you couldn't find it."
         )
 
     def _skills_block(self, user_message: str) -> str:

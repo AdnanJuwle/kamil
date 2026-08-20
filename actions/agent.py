@@ -261,6 +261,7 @@ def iter_agent_native(
     messages = list(messages)
     last_text = ""
     nudged = False
+    fail_streak = 0
 
     for _ in range(max_iters):
         try:
@@ -323,6 +324,22 @@ def iter_agent_native(
 
         messages.append(_assistant_turn(used_native, content, native_calls))
         messages += _thread_results(used_native, results, max_result_chars)
+
+        # Circuit-breaker: if the model keeps making tool calls that ALL fail (e.g. guessing
+        # one fabricated URL/path after another), don't let it burn every iteration. After a
+        # few all-failed rounds, tell it to stop guessing and answer; if it persists, end.
+        if results and all(not r.get("success") for _, r in results):
+            fail_streak += 1
+        else:
+            fail_streak = 0
+        if fail_streak >= 3:
+            messages.append({"role": "user", "content":
+                "STOP: several tool calls in a row have failed. Do NOT call more tools — in "
+                "particular do NOT guess more URLs or file paths. Answer now with what you "
+                "already have, or tell the user plainly what you couldn't retrieve and why."})
+            if fail_streak >= 4:
+                yield {"type": "max_iterations", "text": last_text}
+                return
 
     yield {"type": "max_iterations", "text": last_text}
 
