@@ -18,12 +18,26 @@ _UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
        "(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36")
 
 
+def _int(v, default: int) -> int:
+    """Coerce a tool-supplied numeric arg to int. The model often passes numbers as
+    strings ('6000') or junk ('full'); a raw string in text[:max_chars] crashes with
+    'slice indices must be integers'. Fall back to the default instead."""
+    if isinstance(v, bool):
+        return default
+    if isinstance(v, int):
+        return v
+    try:
+        return int(float(str(v).strip()))
+    except (TypeError, ValueError):
+        return default
+
+
 def search_web(query: str, n: int = 5) -> list[dict]:
     """Return up to n results [{title, url, snippet}]. SearXNG if configured, else DDG."""
     query = (query or "").strip()
     if not query:
         return []
-    n = max(1, min(int(n), 12))
+    n = max(1, min(_int(n, 5), 12))
 
     if SEARXNG_URL:
         try:
@@ -57,6 +71,8 @@ def search_and_read(query: str, n: int = 5, read_top: int = 2, per_page_chars: i
     snippet) so an answer can be grounded in real text. (Ported idea from Odysseus's
     search service, which fetches + ranks content; Kamil only had snippets.) Each of
     the top `read_top` results gets a 'content' field with readable page text."""
+    read_top = _int(read_top, 2)
+    per_page_chars = _int(per_page_chars, 2200)
     results = search_web(query, n)
     for r in results[:read_top]:
         url = r.get("url", "")
@@ -74,6 +90,7 @@ def search_and_read(query: str, n: int = 5, read_top: int = 2, per_page_chars: i
 def fetch_url(url: str, max_chars: int = 6000) -> dict:
     """Fetch a page and return its readable text (tags/scripts stripped)."""
     url = (url or "").strip()
+    max_chars = _int(max_chars, 6000)
     if not url.startswith(("http://", "https://")):
         return {"success": False, "error": "url must start with http(s)://"}
     try:

@@ -1152,16 +1152,47 @@ def validate_tool_call(tool_name: str, params: dict) -> tuple[bool, str]:
     return True, ""
 
 
+def _coerce_params(tool: "Tool", params: dict) -> dict:
+    """Coerce params to their declared schema type. Models routinely emit numbers as
+    strings ('6000') or bools as strings ('true') in tool_call args; passing those raw
+    into text[:max_chars] or a range() crashes ('slice indices must be integers'). Coerce
+    by the ToolParam.type; if a value can't be coerced, drop it so the executor's own
+    default applies rather than crashing. Schema-driven — no per-tool special-casing."""
+    if not isinstance(params, dict):
+        return {}
+    out = dict(params)
+    for p in tool.params:
+        if p.name not in out or out[p.name] is None:
+            continue
+        v = out[p.name]
+        if p.type == "int" and (isinstance(v, bool) or not isinstance(v, int)):
+            # bool is an int subclass, so treat it as non-int and re-coerce.
+            try:
+                out[p.name] = int(float(str(v).strip()))
+            except (TypeError, ValueError):
+                out.pop(p.name, None)
+        elif p.type == "bool" and not isinstance(v, bool):
+            s = str(v).strip().lower()
+            if s in ("true", "1", "yes", "y"):
+                out[p.name] = True
+            elif s in ("false", "0", "no", "n", ""):
+                out[p.name] = False
+            else:
+                out.pop(p.name, None)
+    return out
+
+
 def execute_tool(tool_name: str, params: dict) -> ToolResult:
     """Execute a tool by name with params."""
     if tool_name not in TOOLS:
         return ToolResult(success=False, error=f"Unknown tool: {tool_name}", tool=tool_name, params=params)
-    
+
     valid, error = validate_tool_call(tool_name, params)
     if not valid:
         return ToolResult(success=False, error=error, tool=tool_name, params=params)
-    
-    return TOOLS[tool_name].execute(params)
+
+    tool = TOOLS[tool_name]
+    return tool.execute(_coerce_params(tool, params))
 
 
 def requires_confirmation(tool_name: str) -> bool:
