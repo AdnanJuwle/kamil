@@ -473,6 +473,38 @@ async def vision_status():
     return {"available": vision_tier.available(), "state": vision_tier.state(),
             "label": vision_tier.label(), "reason": vision_tier.missing_reason()}
 
+@app.post("/research")
+async def research_endpoint(message: Message):
+    """Deep multi-step research: streams progress notes, then the grounded report."""
+    import asyncio
+
+    async def gen():
+        loop = asyncio.get_event_loop()
+        q: asyncio.Queue = asyncio.Queue()
+
+        def prog(msg):
+            loop.call_soon_threadsafe(q.put_nowait, ("progress", msg))
+
+        def worker():
+            try:
+                from core.research import deep_research
+                chat_fn = lambda msgs, mt: kamil.client.chat(msgs, temperature=0.3, max_tokens=mt)
+                res = deep_research(message.content, chat_fn, progress=prog)
+                loop.call_soon_threadsafe(q.put_nowait, ("report", res["report"]))
+            except Exception as e:
+                loop.call_soon_threadsafe(q.put_nowait, ("error", str(e)))
+            loop.call_soon_threadsafe(q.put_nowait, None)
+        loop.run_in_executor(None, worker)
+
+        while True:
+            item = await q.get()
+            if item is None:
+                break
+            kind, val = item
+            yield f"data: {json.dumps({'type': kind, 'text': val})}\n\n"
+        yield "data: [DONE]\n\n"
+    return StreamingResponse(gen(), media_type="text/event-stream")
+
 @app.get("/vision/current")
 async def vision_current():
     """What Kamil is looking at right now (live thumbnail + question/answer). The

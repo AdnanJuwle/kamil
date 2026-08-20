@@ -299,6 +299,24 @@ def _look(params: dict) -> "ToolResult":
     return ToolResult(success=True, tool="look", params=params, output={"answer": answer})
 
 
+def _deep_research(params: dict) -> "ToolResult":
+    """Run multi-step web research on a question and return a grounded report."""
+    q = (params.get("question") or params.get("query") or "").strip()
+    if not q:
+        return ToolResult(success=False, tool="deep_research", params=params, error="need a question to research")
+    from core.research import deep_research
+    from core.orchestrator import get_orchestrator
+    orch = get_orchestrator()
+    client = getattr(orch, "client", None)
+    if client is None:
+        return ToolResult(success=False, tool="deep_research", params=params, error="no LLM client available")
+    chat_fn = lambda msgs, mt: client.chat(msgs, temperature=0.3, max_tokens=mt)
+    res = deep_research(q, chat_fn)
+    return ToolResult(success=True, tool="deep_research", params=params,
+                      output={"report": res["report"], "sources_used": len(res["findings"]),
+                              "queries": res["queries"]})
+
+
 def _youtube(params: dict) -> "ToolResult":
     """Fetch a YouTube video's transcript so you can summarize or answer about it."""
     from actions import youtube
@@ -830,6 +848,15 @@ TOOLS: dict[str, Tool] = {
         ],
         permission=Permission.AUTO,
         execute=_job_status
+    ),
+    "deep_research": Tool(
+        name="deep_research",
+        description="Do MULTI-STEP web research on a question (plan queries, search + read pages, "
+                    "find gaps, search again, write a grounded report). Use for real questions that "
+                    "need more than one lookup. Slower than web_search — worth it for depth.",
+        params=[ToolParam("question", "string", required=True, description="The research question")],
+        permission=Permission.AUTO,
+        execute=_deep_research
     ),
     "youtube": Tool(
         name="youtube",
