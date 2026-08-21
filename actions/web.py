@@ -52,18 +52,27 @@ def search_web(query: str, n: int = 5) -> list[dict]:
         except Exception as e:
             print(f"[web] searxng failed ({e}); falling back to DuckDuckGo")
 
-    try:
-        from ddgs import DDGS
-        out = []
-        with DDGS() as ddg:
-            for r in ddg.text(query, max_results=n):
-                out.append({"title": r.get("title", ""),
-                            "url": r.get("href") or r.get("url", ""),
-                            "snippet": r.get("body", "")})
-        return out
-    except Exception as e:
-        print(f"[web] search failed: {e}")
-        return []
+    # DuckDuckGo via ddgs. The DEFAULT backend='auto' intermittently raises
+    # "No results found" (it rotates through endpoints, some rate-limited), which was making
+    # Kamil think the web was empty and then fabricate. The explicit 'html'/'lite' backends
+    # are reliable — try them in order with a short backoff so a transient block clears.
+    import time as _t
+    from ddgs import DDGS
+    for attempt, backend in enumerate(("html", "lite", "html")):
+        try:
+            out = []
+            with DDGS() as ddg:
+                for r in ddg.text(query, max_results=n, backend=backend):
+                    out.append({"title": r.get("title", ""),
+                                "url": r.get("href") or r.get("url", ""),
+                                "snippet": r.get("body", "")})
+            if out:
+                return out
+        except Exception as e:
+            print(f"[web] ddg backend={backend} (attempt {attempt+1}) failed: {e}")
+        _t.sleep(0.5 * (attempt + 1))
+    print(f"[web] no results for query: {query!r}")
+    return []
 
 
 def search_and_read(query: str, n: int = 5, read_top: int = 2, per_page_chars: int = 2200) -> list[dict]:

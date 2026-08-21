@@ -751,7 +751,10 @@ def _web_search(params: dict) -> ToolResult:
     res = search_and_read(params.get("query", ""), n=params.get("n", 5),
                           read_top=params.get("read_top", 3))
     if not res:
-        return ToolResult(success=False, error="no results (or search unavailable)",
+        return ToolResult(success=False,
+                          error="SEARCH RETURNED NO RESULTS. Tell the user plainly that you "
+                                "couldn't find information on this right now — do NOT invent, "
+                                "guess, or answer from memory.",
                           tool="web_search", params=params)
     return ToolResult(success=True, output={"results": res}, tool="web_search", params=params)
 
