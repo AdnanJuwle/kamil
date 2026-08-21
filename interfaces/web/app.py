@@ -1418,11 +1418,47 @@ WHISPER_GHOSTS = {
     "uh", "um", "hmm", ".", "[music]", "[blank_audio]", "subtitles by the amara.org community",
 }
 
+# Substrings that only ever appear in Whisper's caption-training hallucinations, never
+# in someone actually talking to Kamil. Matched anywhere in the transcript.
+_CAPTION_HALLUCINATIONS = (
+    "welcome to my channel", "welcome back to my channel", "thanks for watching",
+    "thank you for watching", "don't forget to subscribe", "like and subscribe",
+    "please subscribe", "see you in the next video", "in this video", "hope you enjoy this video",
+    "subtitles by", "amara.org", "transcription by",
+)
+
+
+def _is_degenerate(text: str) -> bool:
+    """True for a Whisper decoding runaway — a repetition loop ('cake cake cake…') or a
+    YouTube-caption artifact — independent of the exact words. General, not a phrase list
+    of one hallucination."""
+    t = (text or "").lower().strip()
+    if not t:
+        return False
+    if any(p in t for p in _CAPTION_HALLUCINATIONS):
+        return True
+    words = re.findall(r"[a-z']+", t)
+    if len(words) >= 6:
+        # a single token repeated many times in a row ("cake cake cake …")
+        run = best = 1
+        for a, b in zip(words, words[1:]):
+            run = run + 1 if a == b else 1
+            best = max(best, run)
+        if best >= 4:
+            return True
+        # overall low lexical diversity across a long transcript
+        if len(words) >= 12 and len(set(words)) / len(words) < 0.35:
+            return True
+    return False
+
+
 def _looks_like_silence(text: str, result: dict, audio) -> bool:
     """True when the transcript is almost certainly a Whisper hallucination on
     silence — so we don't fire a voice reply at nothing."""
     t = (text or "").lower().strip(" .!?,\"'")
     if not t:
+        return True
+    if _is_degenerate(text):               # repetition loop / caption artifact
         return True
     energy = 0.0
     try:
@@ -1451,8 +1487,17 @@ async def transcribe(request: Request):
             tmp_path = f.name
 
         model = get_whisper()
-        # beam_size=1 (greedy) is fastest; segments are lazy, so materialise them.
-        segments, _info = model.transcribe(tmp_path, language="en", beam_size=1)
+        # Anti-hallucination decoding. large-v3 otherwise invents YouTube-caption text and
+        # runs away into token loops ("cake cake cake…") on short/near-silent clips:
+        #  - vad_filter strips non-speech regions (the #1 hallucination source),
+        #  - condition_on_previous_text=False stops it spiralling on its own output,
+        #  - compression_ratio/log_prob/no_speech thresholds drop degenerate segments,
+        #  - temperature=0 is deterministic greedy.
+        segments, _info = model.transcribe(
+            tmp_path, language="en", beam_size=1, temperature=0.0,
+            vad_filter=True, vad_parameters=dict(min_silence_duration_ms=500),
+            condition_on_previous_text=False,
+            compression_ratio_threshold=2.4, log_prob_threshold=-1.0, no_speech_threshold=0.6)
         seg_list = list(segments)
         text = "".join(s.text for s in seg_list).strip()
         # shape a result compatible with _looks_like_silence (it reads no_speech_prob)
