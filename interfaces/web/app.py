@@ -277,6 +277,27 @@ async def lifespan(app):
 
 app = FastAPI(lifespan=lifespan)
 
+# ── Local API auth ─────────────────────────────────────────────────────────────
+# Kamil binds to loopback, but 127.0.0.1 is NOT a trust boundary: any other local
+# process — including a web page open in a browser — can POST to it and drive the agent
+# (/execute_tool, shell, files). If KAMIL_API_TOKEN is set (the Electron launcher mints a
+# fresh one per run and injects it as X-Kamil-Token on every renderer request), require it
+# on every endpoint except the SPA shell "/". No token set (e.g. running run.py bare in
+# dev) = no enforcement, so this can't brick a manual launch.
+_API_TOKEN = os.getenv("KAMIL_API_TOKEN", "").strip()
+
+
+@app.middleware("http")
+async def _local_auth_gate(request, call_next):
+    if _API_TOKEN and request.url.path != "/":
+        import hmac
+        from starlette.responses import JSONResponse
+        sent = request.headers.get("X-Kamil-Token", "")
+        if not hmac.compare_digest(sent, _API_TOKEN):
+            return JSONResponse({"error": "unauthorized"}, status_code=401)
+    return await call_next(request)
+
+
 class Message(BaseModel):
     content: str
 
