@@ -1481,10 +1481,8 @@ async def transcribe(request: Request):
 
         model = get_whisper()
 
-        # Load + GAIN-NORMALISE the clip up front. The mic is very quiet (peaks ~0.02, ~2% of
-        # full scale), and both Whisper and the speaker encoder read a faint signal badly —
-        # 'can you hear me' came back as 'Funny, funny.' Peak-normalise to near-full-scale
-        # (capped gain so a near-silent clip isn't blown up) so both models get a real signal.
+        # Load the clip once (for the silence guard + speaker id). No gain/normalisation —
+        # amplifying a quiet mic on the backend just amplified noise and hurt accuracy.
         audio = None
         try:
             import librosa
@@ -1493,23 +1491,11 @@ async def transcribe(request: Request):
                 audio, _sr = librosa.load(tmp_path, sr=16000, mono=True)
         except Exception as e:
             print(f"[transcribe] audio load failed: {e}")
-        if audio is not None and len(audio):
-            import numpy as _np
-            peak = float(_np.abs(audio).max())
-            if peak > 1e-4:
-                gain = min(0.97 / peak, float(os.getenv("KAMIL_STT_MAX_GAIN", "30")))
-                if gain > 1.0:
-                    audio = (audio * gain).astype(_np.float32)
-                    print(f"[transcribe] gain-normalised x{gain:.1f} (peak was {peak:.4f})")
 
-        # Transcribe the (normalised) clip. The FRONTEND already gates on voice activity, so
-        # the backend must NOT add its own VAD (that ate real speech). condition_on_previous_
-        # text=False stops large-v3 spiralling into caption text; the degenerate-output guard
-        # below catches runaways ("cake cake cake…"). faster-whisper accepts the numpy array.
-        stt_input = audio if (audio is not None and len(audio)) else tmp_path
-        segments, _info = model.transcribe(
-            stt_input, language="en", beam_size=1, temperature=0.0,
-            condition_on_previous_text=False)
+        # Minimal, faster-whisper defaults — do NOT add temperature=0.0 (it disables the
+        # temperature-fallback ladder that retries repetitive/low-confidence decodes) or a
+        # backend VAD (it eats real speech). Both regressed accuracy. Keep this simple.
+        segments, _info = model.transcribe(tmp_path, language="en", beam_size=1)
         seg_list = list(segments)
         text = "".join(s.text for s in seg_list).strip()
 
