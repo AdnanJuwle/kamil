@@ -1158,24 +1158,25 @@ async def _stream_voice_conversation(user_message: str):
 
 
 async def _voice_reply_stream(user_message: str):
-    """The single spoken-reply pipeline for BOTH call modes. VOICE fails safe INTO
-    conversation: only utterances that CLEARLY want a tool (wants_tools) reach the agent;
-    everything else — greetings, chit-chat, corrections, and the frequent mistranscriptions
-    of a live call — gets a plain spoken reply. This is deliberately the opposite default
-    from the text path, because on a call a wrong tool run opens the webcam / writes files /
-    burns the GPU, while a wrong conversational reply costs nothing. Audio streams sentence
-    by sentence either way."""
-    from core.orchestrator import wants_tools
+    """The single spoken-reply pipeline for BOTH call modes. Only unmistakable small-talk
+    takes the fast tool-less stream; EVERYTHING ELSE goes to the context-aware tool agent.
+    A per-utterance keyword gate can't understand a live conversation — it fires a literal
+    search on a standing instruction ('you can search the web if unsure'), and it can't
+    connect 'okay do it' to the action just proposed, so the tool-less path then FABRICATES
+    having searched. Defaulting to the agent (which carries the conversation history and
+    real tools) fails safe: it can act on continuations and can't claim a tool result it
+    never produced. Audio streams sentence by sentence either way."""
+    from core.orchestrator import is_small_talk
     import asyncio
     loop = asyncio.get_event_loop()
 
-    # No clear tool intent → fast conversational stream (no tools, no agent, no webcam).
-    if not wants_tools(user_message):
+    # Pure small-talk → fast conversational stream. Everything else → the agent with context.
+    if is_small_talk(user_message):
         async for chunk in _stream_voice_conversation(user_message):
             yield chunk
         return
 
-    # 2) Tool agent — only for utterances that clearly asked for a tool.
+    # 2) Context-aware tool agent for everything substantive.
     q: asyncio.Queue = asyncio.Queue()
 
     def worker():

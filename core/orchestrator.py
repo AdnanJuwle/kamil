@@ -57,44 +57,11 @@ def is_small_talk(text: str) -> bool:
     return any(_re_task.match(p, s) for p in _SMALLTALK_PATTERNS)
 
 
-# Tool-INTENT signals. Used by the VOICE path, which fails safe INTO conversation (a wrong
-# conversational reply is harmless; a wrong tool run opens the webcam / writes files / burns
-# the GPU). So voice only reaches the agent when the utterance clearly WANTS a tool. (Text
-# fails safe the other way — into the agent — because there the harm is reversed.)
-_TOOL_INTENT_PATTERNS = [
-    # current / real-world info -> web (strong signals only; bare temporal words like
-    # 'today'/'right now' are too common in casual speech to escalate on)
-    # Bare 'web'/'internet'/'online'/'google' as whole words are strong web-search intent —
-    # they catch the whole family ('go to web', 'go on web', 'check online', 'on the internet')
-    # instead of one phrasing. \b avoids matching 'webcam'/'website'.
-    r"\b(web|internet|online|google|search|news|weather|forecast|price|prices|stock|"
-    r"score|who won|exchange rate|latest|look (it|this|that) up|how much (is|are|does))\b",
-    # explicit actions on things
-    r"\b(create|write|make|build|generate|run|execute|fix|edit|change|implement|refactor|"
-    r"delete|remove|install|rename|move|append|open the|read the|list the|show me the|"
-    r"go through|scan|inspect|debug|compile|deploy|send|research|summarize|translate|"
-    r"remember (that|this)|enroll|learn)\b",
-    # vision -> the camera
-    r"\b(look at|take a look|what do you see|can you see|do you see|what am i (looking at|holding|showing)|"
-    r"what'?s (in front of|on) (me|my|the)|through the (camera|webcam)|use your (eyes|camera|webcam)|"
-    r"check the (camera|webcam|image|photo|picture|screen)|describe (this|the|my) (image|photo|picture|screen|frame)|"
-    r"read (this|the) (sign|label|screen|text))\b",
-    # code / files
-    r"\.(py|js|ts|jsx|tsx|html|css|java|cpp|c|rs|go|sh|ino|md|json|yml|yaml)\b",
-    r"\b(the code|the file|the folder|the repo|the function|the script|the bug|the class|the module)\b",
-    # youtube / research
-    r"(youtube\.com/|youtu\.be/)",
-    r"\b(deep|thorough) research\b|\bresearch (this|about|into)\b",
-]
-_re_tool = _re_task  # alias for readability
-
-
-def wants_tools(text: str) -> bool:
-    """Does this utterance clearly ask for a TOOL (web/vision/files/actions)? Conservative
-    on purpose — used to decide when VOICE escalates from a plain spoken reply to the agent,
-    so chit-chat and mistranscriptions don't trigger webcam/file/GPU actions."""
-    s = " " + (text or "").lower() + " "
-    return any(_re_tool.search(p, s) for p in _TOOL_INTENT_PATTERNS)
+# NOTE: a per-utterance keyword 'wants_tools' gate used to decide when voice escalated to
+# the agent. It was removed — a context-free keyword list can't read a live conversation
+# (it fired a literal search on the standing instruction 'you can search if unsure', and
+# couldn't connect 'okay do it' to the action just proposed). Voice now defaults to the
+# context-aware agent with only the is_small_talk fast-path, same as the text path.
 
 
 def looks_like_task(text: str) -> bool:
