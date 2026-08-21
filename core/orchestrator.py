@@ -64,9 +64,11 @@ def is_small_talk(text: str) -> bool:
 _TOOL_INTENT_PATTERNS = [
     # current / real-world info -> web (strong signals only; bare temporal words like
     # 'today'/'right now' are too common in casual speech to escalate on)
-    r"\b(latest|news|weather|forecast|price|prices|stock|score|who won|exchange rate|"
-    r"how much (is|are|does)|look (it|this|that) up|search|google|on the (web|internet|online)|"
-    r"check (online|the web))\b",
+    # Bare 'web'/'internet'/'online'/'google' as whole words are strong web-search intent —
+    # they catch the whole family ('go to web', 'go on web', 'check online', 'on the internet')
+    # instead of one phrasing. \b avoids matching 'webcam'/'website'.
+    r"\b(web|internet|online|google|search|news|weather|forecast|price|prices|stock|"
+    r"score|who won|exchange rate|latest|look (it|this|that) up|how much (is|are|does))\b",
     # explicit actions on things
     r"\b(create|write|make|build|generate|run|execute|fix|edit|change|implement|refactor|"
     r"delete|remove|install|rename|move|append|open the|read the|list the|show me the|"
