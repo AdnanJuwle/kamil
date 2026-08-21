@@ -368,16 +368,25 @@ class Orchestrator:
         return [{"role": "system", "content": system}] + recent + [{"role": "user", "content": user_message}]
 
     def _looks_like_coding(self, message: str) -> bool:
-        """Does this task actually need the big coding model? (vs. a web lookup or
-        file read the 8B can drive.)"""
-        s = message.lower()
-        kw = ["code", "gui", "script", "program", "function", "class ", "method",
-              "refactor", "implement", "debug", "compile", "module", "api ",
-              "endpoint", "write a ", "create a file", "create a script",
-              "create a gui", "create a demo", "make a file", "edit the", "edit ",
-              "fix the", "add a ", "build a", "rewrite", "unit test", "the bug",
-              ".py", ".js", ".ts", ".html", ".css", ".java", ".cpp", ".ino"]
-        return any(k in s for k in kw)
+        """Does this task need the big coding model? The heavy coder is for WRITING or
+        MODIFYING code — not for reading, comparing, explaining, or reviewing it (the fast
+        8B reads files and answers). So we require a write-intent: an inherently-code verb,
+        or a general build/change verb applied to a code object. Merely mentioning 'code'
+        or 'source code' (a read/compare task) must NOT escalate."""
+        s = " " + message.lower() + " "
+        # Verbs that on their own mean "produce/alter code".
+        strong = ("refactor", "implement", "debug", "compile", "scaffold", "unit test")
+        if any(k in s for k in strong):
+            return True
+        # General action verbs only count when applied to a code object.
+        weak = ("write", "create", "make", "build", "add ", "fix", "edit", "change",
+                "generate", "rewrite", "modify", "patch", "port ", "migrate")
+        code_obj = ("code", "script", "program", "function", "gui", "module", "class",
+                    "method", "endpoint", " api", "app", "demo", "website", "webpage",
+                    "parser", "server", "feature", "the bug", "a bug",
+                    ".py", ".js", ".ts", ".tsx", ".jsx", ".html", ".css", ".java",
+                    ".cpp", ".c ", ".ino", ".rs", ".go")
+        return any(w in s for w in weak) and any(c in s for c in code_obj)
 
     def _classify_intent(self, message: str) -> str:
         msg = message.lower()
