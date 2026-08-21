@@ -1158,23 +1158,24 @@ async def _stream_voice_conversation(user_message: str):
 
 
 async def _voice_reply_stream(user_message: str):
-    """The single spoken-reply pipeline for BOTH call modes. Routes exactly like the text
-    path: pure small-talk gets a fast tool-less spoken reply; everything else goes through
-    the tool-capable agent, which calls look / web_search / read_file itself. No per-intent
-    fast-paths — vision and web are just tools the model chooses, so voice can't answer a
-    'what do you see' from a stale frame or fabricate a web fact. Audio streams sentence
+    """The single spoken-reply pipeline for BOTH call modes. VOICE fails safe INTO
+    conversation: only utterances that CLEARLY want a tool (wants_tools) reach the agent;
+    everything else — greetings, chit-chat, corrections, and the frequent mistranscriptions
+    of a live call — gets a plain spoken reply. This is deliberately the opposite default
+    from the text path, because on a call a wrong tool run opens the webcam / writes files /
+    burns the GPU, while a wrong conversational reply costs nothing. Audio streams sentence
     by sentence either way."""
-    from core.orchestrator import is_small_talk
+    from core.orchestrator import wants_tools
     import asyncio
     loop = asyncio.get_event_loop()
 
-    # Small-talk → fast conversational stream (no tools, no agent spin-up).
-    if is_small_talk(user_message):
+    # No clear tool intent → fast conversational stream (no tools, no agent, no webcam).
+    if not wants_tools(user_message):
         async for chunk in _stream_voice_conversation(user_message):
             yield chunk
         return
 
-    # 2) Tool agent for other real requests.
+    # 2) Tool agent — only for utterances that clearly asked for a tool.
     q: asyncio.Queue = asyncio.Queue()
 
     def worker():
