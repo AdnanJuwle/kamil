@@ -74,9 +74,12 @@ def test_non_decision_low_signals_below_floor():
 def test_ram_evicts_to_cache_when_over_budget():
     mgr = cm.ContextManager()
     big = "a" * 5000  # plain content: not a decision marker
-    for _ in range(3):
+    # Push comfortably past the RAM budget (tracks MAX_RAM_CHARS, which the longer-memory
+    # feature raised) so eviction is guaranteed regardless of the configured budget.
+    n = (cm.MAX_RAM_CHARS // 5000) + 3
+    for _ in range(n):
         mgr.add_message({"role": "user", "content": big})
-    # Over budget (15000 > MAX_RAM_CHARS) -> oldest message pushed to cache.
+    # Over budget -> oldest message(s) pushed to cache.
     assert mgr._ram_chars() <= cm.MAX_RAM_CHARS or len(mgr.ram) <= 2
     assert len(mgr.cache) >= 1
 

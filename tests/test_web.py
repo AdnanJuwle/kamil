@@ -5,6 +5,7 @@ from actions import tools
 
 def test_fetch_strips_html(monkeypatch):
     class _R:
+        status_code = 200
         text = ("<html><head><style>x{}</style><script>bad()</script></head>"
                 "<body><h1>Title</h1> <p>hello &amp; world</p></body></html>")
     monkeypatch.setattr(web.httpx, "get", lambda *a, **k: _R())
