@@ -1454,27 +1454,19 @@ def _is_degenerate(text: str) -> bool:
 
 
 def _looks_like_silence(text: str, result: dict, audio) -> bool:
-    """True when the transcript is almost certainly a Whisper hallucination on
-    silence — so we don't fire a voice reply at nothing."""
+    """The FRONTEND already gates on voice activity (it only sends a clip once real speech
+    is detected), so be permissive here: only drop empty text, degenerate runaways / caption
+    artifacts, and unmistakable ghost tokens. Do NOT drop on absolute audio energy — a quiet
+    mic makes a real word ('Hello.') in a mostly-silent clip look 'silent', and that was
+    throwing away genuine speech."""
     t = (text or "").lower().strip(" .!?,\"'")
     if not t:
         return True
     if _is_degenerate(text):               # repetition loop / caption artifact
         return True
-    energy = 0.0
-    try:
-        import numpy as np
-        if audio is not None and len(audio):
-            energy = float(np.sqrt(np.mean(np.square(audio))))
-    except Exception:
-        pass
     segs = result.get("segments") or []
     nsp = (sum(s.get("no_speech_prob", 0.0) for s in segs) / len(segs)) if segs else 1.0
-    if energy and energy < 0.003:          # essentially silent input
-        return True
-    if t in WHISPER_GHOSTS and nsp > 0.5:  # a known ghost + Whisper's own doubt
-        return True
-    if nsp > 0.9:                           # Whisper itself says "no speech"
+    if t in WHISPER_GHOSTS and nsp > 0.5:  # a known ghost token + Whisper's own doubt
         return True
     return False
 
@@ -1489,19 +1481,10 @@ async def transcribe(request: Request):
 
         model = get_whisper()
 
-        # Transcribe the clip as-is. The FRONTEND already gates on voice activity (it only
-        # sends a clip once real speech is detected), so the backend must NOT second-guess
-        # that with its own VAD — doing so ate real speech and returned empty. The only
-        # decode hardening is condition_on_previous_text=False, which stops large-v3
-        # spiralling into caption text on its own output; the degenerate-output guard below
-        # catches any remaining runaway ("cake cake cake…"). temperature=0 is deterministic.
-        segments, _info = model.transcribe(
-            tmp_path, language="en", beam_size=1, temperature=0.0,
-            condition_on_previous_text=False)
-        seg_list = list(segments)
-        text = "".join(s.text for s in seg_list).strip()
-
-        # Load the clip once (for the silence guard + speaker id)
+        # Load + GAIN-NORMALISE the clip up front. The mic is very quiet (peaks ~0.02, ~2% of
+        # full scale), and both Whisper and the speaker encoder read a faint signal badly —
+        # 'can you hear me' came back as 'Funny, funny.' Peak-normalise to near-full-scale
+        # (capped gain so a near-silent clip isn't blown up) so both models get a real signal.
         audio = None
         try:
             import librosa
@@ -1510,6 +1493,25 @@ async def transcribe(request: Request):
                 audio, _sr = librosa.load(tmp_path, sr=16000, mono=True)
         except Exception as e:
             print(f"[transcribe] audio load failed: {e}")
+        if audio is not None and len(audio):
+            import numpy as _np
+            peak = float(_np.abs(audio).max())
+            if peak > 1e-4:
+                gain = min(0.97 / peak, float(os.getenv("KAMIL_STT_MAX_GAIN", "30")))
+                if gain > 1.0:
+                    audio = (audio * gain).astype(_np.float32)
+                    print(f"[transcribe] gain-normalised x{gain:.1f} (peak was {peak:.4f})")
+
+        # Transcribe the (normalised) clip. The FRONTEND already gates on voice activity, so
+        # the backend must NOT add its own VAD (that ate real speech). condition_on_previous_
+        # text=False stops large-v3 spiralling into caption text; the degenerate-output guard
+        # below catches runaways ("cake cake cake…"). faster-whisper accepts the numpy array.
+        stt_input = audio if (audio is not None and len(audio)) else tmp_path
+        segments, _info = model.transcribe(
+            stt_input, language="en", beam_size=1, temperature=0.0,
+            condition_on_previous_text=False)
+        seg_list = list(segments)
+        text = "".join(s.text for s in seg_list).strip()
 
         # shape a result compatible with _looks_like_silence (it reads no_speech_prob)
         result = {"segments": [{"no_speech_prob": float(getattr(s, "no_speech_prob", 0.0) or 0.0)}
