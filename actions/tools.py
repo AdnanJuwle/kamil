@@ -8,6 +8,7 @@ Permission levels:
 """
 
 import os
+import re
 import json
 import subprocess
 from pathlib import Path
@@ -399,13 +400,19 @@ class ToolParam:
     default: Any = None
 
 
-@dataclass 
+@dataclass
 class Tool:
     name: str
     description: str
     params: list[ToolParam]
     permission: Permission
     execute: Callable
+    # Effect class. `irreversible=True` marks an outward-facing / not-undoable action
+    # (send a message, delete data, publish, pay). Such actions ALWAYS pause for the
+    # user's approval — even in autonomous mode — and cannot be auto-run. This is the
+    # general safety primitive that MCP/email tools plug into: a side-effecting tool is
+    # gated by its effect class, not by a hardcoded name list.
+    irreversible: bool = False
 
 
 @dataclass
@@ -1201,7 +1208,34 @@ def execute_tool(tool_name: str, params: dict) -> ToolResult:
     return tool.execute(_coerce_params(tool, params))
 
 
+# Effect-class heuristic for UNREGISTERED tools (e.g. MCP tools not in TOOLS): a name
+# that reads as an outward/irreversible action is gated by default. Registered tools use
+# their declared `irreversible` flag instead; this only decides the unknown ones, and it
+# fails SAFE (unknown side-effecting-sounding tool -> pause), never silently auto-runs.
+# Keyed on the ACTION VERB as a whole token — not the noun — so read-only names like
+# list_emails / read_email / get_messages are NOT gated, while send_*/delete_*/pay_* are.
+_IRREVERSIBLE_NAME_RE = re.compile(
+    r"(?:^|[_\-.:/])(send|reply|forward|post|publish|tweet|"
+    r"delete|remove|destroy|drop|erase|purge|trash|wipe|"
+    r"pay|purchase|buy|order|checkout|transfer|withdraw|deposit|refund|charge|"
+    r"revoke|deactivate|disable|uninstall|terminate|cancel|merge|deploy|release|invite|"
+    r"create_event|update_event|schedule_send)(?:$|[_\-.:/])", re.IGNORECASE)
+
+
+def action_is_irreversible(tool_name: str, params: dict = None) -> bool:
+    """Is this tool call an outward-facing / not-undoable action? A registered tool that
+    DECLARES itself irreversible always is; otherwise (registered or MCP) the name
+    heuristic decides and fails safe. So even a mis-declared or unknown send_email /
+    delete_* tool is gated. Read-only and local-reversible actions return False."""
+    tool = TOOLS.get(tool_name)
+    if tool is not None and getattr(tool, "irreversible", False):
+        return True
+    return bool(_IRREVERSIBLE_NAME_RE.search(tool_name or ""))
+
+
 def requires_confirmation(tool_name: str) -> bool:
+    if action_is_irreversible(tool_name):
+        return True
     if tool_name not in TOOLS:
         return True
     return TOOLS[tool_name].permission == Permission.CONFIRM
@@ -1211,7 +1245,12 @@ def requires_confirmation_call(tool_name: str, params: dict) -> bool:
     """Call-aware confirmation for autonomous agent mode: a CONFIRM tool may
     auto-run if THIS specific call already passes the hard guardrails (write inside
     the allowed roots, shell not on the denylist). Calls that fall outside the
-    fence still pause for the user."""
+    fence still pause for the user. IRREVERSIBLE/external actions always pause —
+    autonomous mode cannot bypass them."""
+    # Irreversible/outward actions ALWAYS confirm, regardless of KAMIL_AGENT_AUTO. This is
+    # what keeps a future send_email / delete_* MCP tool from ever auto-firing.
+    if action_is_irreversible(tool_name, params):
+        return True
     tool = TOOLS.get(tool_name)
     if tool is None:
         return True
