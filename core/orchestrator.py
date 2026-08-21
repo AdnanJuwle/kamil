@@ -803,7 +803,11 @@ class Orchestrator:
             tools_schema = get_tools_openai_schema()
             chat_fn = lambda msgs: agent_client.chat_tools(
                 msgs, tools_schema, temperature=agent_temp, max_tokens=agent_max, sampling=agent_sampling)
-            loop = iter_agent_native(chat_fn, messages, max_iters=max_iters, needs_confirm=_agent_needs_confirm())
+            # A spoken turn gets a tighter wall-clock budget so a call never hangs for
+            # minutes; text uses the (generous) env default.
+            _tb = float(os.getenv("KAMIL_VOICE_TIME_BUDGET", "90")) if voice else None
+            loop = iter_agent_native(chat_fn, messages, max_iters=max_iters,
+                                     needs_confirm=_agent_needs_confirm(), time_budget=_tb)
         else:
             model_fn = lambda msgs: agent_client.chat(
                 msgs, temperature=agent_temp, max_tokens=agent_max, sampling=agent_sampling)

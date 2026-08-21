@@ -253,17 +253,34 @@ def iter_agent_native(
     executor: Callable = execute_tool,
     needs_confirm: Callable = requires_confirmation,
     max_result_chars: int = DEFAULT_MAX_RESULT_CHARS,
+    time_budget: float = None,
 ) -> Iterator[dict]:
     """Agent loop using NATIVE tool-calling. `chat_fn(messages)` returns an assistant
     message dict {"content", "tool_calls"}. Uses structured tool_calls when present,
     else falls back to parsing ```tool fences from the content — a strict superset of
-    iter_agent. Same events; same confirm/pause semantics."""
+    iter_agent. Same events; same confirm/pause semantics.
+
+    `time_budget` (seconds) is a wall-clock ceiling on the whole loop: a general last
+    resort so a turn can never run away for MINUTES (slow model, stuck tool, spiral)
+    regardless of cause. Generous by default; background jobs don't count (they return
+    immediately). Env KAMIL_AGENT_TIME_BUDGET overrides the default."""
+    import time
+    if time_budget is None:
+        time_budget = float(os.getenv("KAMIL_AGENT_TIME_BUDGET", "240"))
+    started = time.monotonic()
     messages = list(messages)
     last_text = ""
     nudged = False
     fail_streak = 0
 
     for _ in range(max_iters):
+        # Wall-clock guard: stop before another (possibly slow) model call if we're over
+        # budget. Return whatever we have rather than grinding on for minutes.
+        if time_budget and (time.monotonic() - started) > time_budget:
+            yield {"type": "max_iterations",
+                   "text": last_text or "I spent too long on that without finishing — "
+                   "tell me how you'd like me to narrow it down and I'll try again."}
+            return
         try:
             msg = chat_fn(messages)
         except Exception as e:
