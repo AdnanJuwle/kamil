@@ -873,7 +873,15 @@
   // ── Call: hands-free voice, driven from the presence sphere (click it to talk) ──
   let call = null;
   let callMode = 'agent';   // 'agent' (does things) | 'chill' (just talk)
-  const CALL_SPEECH = 0.018, CALL_SILENCE_MS = 1300, CALL_MAX_MS = 22000, CALL_MIN_SPEECH_MS = 350;
+  // Speech detection is ADAPTIVE, not a fixed level: a fixed gate (old CALL_SPEECH=0.018)
+  // silently dropped a quiet mic — speech never crossed it, so clips were never even sent.
+  // We track the room's noise floor and trigger a small margin above it, with a low absolute
+  // floor so quiet speakers are still heard. Over-capturing is safe now: the backend drops
+  // hallucinated/degenerate transcripts and voice defaults to conversation.
+  const CALL_SPEECH_MIN = 0.009;   // absolute floor (below this = never speech, even if noisy)
+  const CALL_SPEECH_RATIO = 2.0;   // trigger when level exceeds noiseFloor * ratio + margin
+  const CALL_SPEECH_MARGIN = 0.004;
+  const CALL_SILENCE_MS = 1300, CALL_MAX_MS = 22000, CALL_MIN_SPEECH_MS = 350;
   const CALL_END_PHRASES = ["im off","i am off","bye","goodbye","talk later","thats all","that is all",
     "end call","hang up","cut the call","see you","catch you later","im done","i am done","that will be all","im out","peace out"];
 
@@ -914,7 +922,7 @@
       const actx = new (window.AudioContext || window.webkitAudioContext)();
       const src = actx.createMediaStreamSource(stream);
       const analyser = actx.createAnalyser(); analyser.fftSize = 512; src.connect(analyser);
-      call = { stream, actx, analyser, data:new Uint8Array(analyser.frequencyBinCount), recorder:null, state:'listening', ending:false, vadRaf:0, vizRaf:0 };
+      call = { stream, actx, analyser, data:new Uint8Array(analyser.frequencyBinCount), recorder:null, state:'listening', ending:false, vadRaf:0, vizRaf:0, noiseFloor:0.005 };
       callViz();
       appendSystem(callMode === 'agent' ? 'call started · work mode' : 'call started · chat mode', true);
       callListen();
@@ -927,9 +935,14 @@
     const chunks = []; call.recorder = rec;
     rec.ondataavailable = e => chunks.push(e.data);
     let hadSpeech = false, speechStart = 0, lastLoud = performance.now(), started = performance.now();
+    let peak = 0;
     rec.onstop = async () => {
       if (!call || call.ending) return;
       const spoke = hadSpeech && (performance.now() - speechStart > CALL_MIN_SPEECH_MS);
+      // Visible in DevTools (Ctrl+Shift+I) to calibrate the mic: peak vs the live threshold.
+      console.log(`[call VAD] peak=${peak.toFixed(4)} noiseFloor=${call.noiseFloor.toFixed(4)} `
+        + `thresh=${Math.max(CALL_SPEECH_MIN, call.noiseFloor*CALL_SPEECH_RATIO+CALL_SPEECH_MARGIN).toFixed(4)} `
+        + `spoke=${spoke}`);
       if (!spoke) { callListen(); return; }
       await callProcess(new Blob(chunks, { type:'audio/webm' }));
     };
@@ -937,7 +950,11 @@
     const tick = () => {
       if (!call || call.recorder !== rec || call.ending) return;
       const lvl = callLevel(), now = performance.now();
-      if (lvl > CALL_SPEECH) { if (!hadSpeech) { hadSpeech = true; speechStart = now; } lastLoud = now; }
+      if (lvl > peak) peak = lvl;
+      // Adapt the noise floor from quiet listening (fast down to the real floor, slow up).
+      if (!hadSpeech) call.noiseFloor = (lvl < call.noiseFloor) ? lvl : call.noiseFloor + (lvl - call.noiseFloor) * 0.02;
+      const speechThresh = Math.max(CALL_SPEECH_MIN, call.noiseFloor * CALL_SPEECH_RATIO + CALL_SPEECH_MARGIN);
+      if (lvl > speechThresh) { if (!hadSpeech) { hadSpeech = true; speechStart = now; } lastLoud = now; }
       if ((hadSpeech && now - lastLoud > CALL_SILENCE_MS) || (now - started > CALL_MAX_MS)) {
         if (rec.state === 'recording') rec.stop(); return;
       }

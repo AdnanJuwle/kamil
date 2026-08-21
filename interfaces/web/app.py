@@ -1489,8 +1489,19 @@ async def transcribe(request: Request):
 
         model = get_whisper()
 
-        # Load the clip once, up front — needed for the energy check, the silence guard,
-        # and speaker id.
+        # Transcribe the clip as-is. The FRONTEND already gates on voice activity (it only
+        # sends a clip once real speech is detected), so the backend must NOT second-guess
+        # that with its own VAD — doing so ate real speech and returned empty. The only
+        # decode hardening is condition_on_previous_text=False, which stops large-v3
+        # spiralling into caption text on its own output; the degenerate-output guard below
+        # catches any remaining runaway ("cake cake cake…"). temperature=0 is deterministic.
+        segments, _info = model.transcribe(
+            tmp_path, language="en", beam_size=1, temperature=0.0,
+            condition_on_previous_text=False)
+        seg_list = list(segments)
+        text = "".join(s.text for s in seg_list).strip()
+
+        # Load the clip once (for the silence guard + speaker id)
         audio = None
         try:
             import librosa
@@ -1499,37 +1510,6 @@ async def transcribe(request: Request):
                 audio, _sr = librosa.load(tmp_path, sr=16000, mono=True)
         except Exception as e:
             print(f"[transcribe] audio load failed: {e}")
-        energy = 0.0
-        try:
-            import numpy as _np
-            if audio is not None and len(audio):
-                energy = float(_np.sqrt(_np.mean(_np.square(audio))))
-        except Exception:
-            pass
-
-        # Anti-hallucination decoding: condition_on_previous_text=False stops large-v3
-        # spiralling into caption text / token loops ("cake cake cake…") on its own output,
-        # and the thresholds drop degenerate segments. temperature=0 is deterministic.
-        def _run(vad: bool):
-            segs, _i = model.transcribe(
-                tmp_path, language="en", beam_size=1, temperature=0.0,
-                vad_filter=vad,
-                vad_parameters=dict(threshold=float(os.getenv("KAMIL_VAD_THRESHOLD", "0.3")),
-                                    min_silence_duration_ms=700, speech_pad_ms=300),
-                condition_on_previous_text=False,
-                compression_ratio_threshold=2.4, log_prob_threshold=-1.0, no_speech_threshold=0.6)
-            sl = list(segs)
-            return "".join(s.text for s in sl).strip(), sl
-
-        # VAD first (cuts dead air, the #1 hallucination source). But VAD must never eat
-        # REAL speech: if it strips a clip that clearly HAS sound down to nothing, it was
-        # too aggressive for this mic — retry without it and let the degenerate-output
-        # guard catch any runaway. So quiet/short speech still gets transcribed.
-        first_vad = os.getenv("KAMIL_STT_VAD", "1") == "1"
-        text, seg_list = _run(vad=first_vad)
-        if first_vad and not text and energy > float(os.getenv("KAMIL_STT_RETRY_ENERGY", "0.004")):
-            print(f"[transcribe] VAD returned empty on audible clip (energy={energy:.4f}); retrying without VAD")
-            text, seg_list = _run(vad=False)
 
         # shape a result compatible with _looks_like_silence (it reads no_speech_prob)
         result = {"segments": [{"no_speech_prob": float(getattr(s, "no_speech_prob", 0.0) or 0.0)}
