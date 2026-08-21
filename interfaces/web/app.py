@@ -1188,19 +1188,17 @@ async def _voice_reply_stream(user_message: str):
         loop.call_soon_threadsafe(q.put_nowait, None)
     loop.run_in_executor(None, worker)
 
-    # A SHORT, ORIGINAL spoken announcement (not a canned phrase) so there's no dead
-    # air while the tools run — Kamil says what he's about to do, in his own words.
-    ann_sys = ("You are Kamil. Adnan just asked you to do something that takes a moment. Reply with "
-               "ONE short, natural spoken sentence that says you're on it and names what you're about "
-               "to do — e.g. \"Sure, let me check the prana folder for that.\" 12 words max. Output "
-               "ONLY that sentence, no tool calls, no markup.")
-    try:
-        ann = await loop.run_in_executor(None, lambda: kamil.client.chat(
-            [{"role": "system", "content": ann_sys}, {"role": "user", "content": user_message}],
-            max_tokens=40, temperature=0.7))
-        ann = (ann or "").strip().strip('"').split("\n")[0].strip() or "Okay, let me look into that."
-    except Exception:
-        ann = "Okay, let me look into that."
+    # A short spoken filler so there's no dead air while the tools run. It MUST NOT answer the
+    # question: an LLM-generated 'announcement' from the user's message kept fabricating the
+    # answer from memory ('Odysseus is a video by PewDiePie') and speaking it BEFORE any tool
+    # ran — that fake answer never entered the logs or the real reply. A varied safe pool
+    # signals 'on it' without ever stating a fact, so it can't leak a wrong answer.
+    import random
+    ann = random.choice([
+        "On it — one sec.", "Let me look that up.", "Give me a moment.", "Checking that now.",
+        "One sec, getting that for you.", "Alright, let me find out.", "Hold on, looking into it.",
+        "Let me pull that up.", "Sure, one moment.",
+    ])
     yield f"data: {json.dumps({'type': 'status', 'text': ann})}\n\n"
     async for b64 in _synth(ann):
         yield f"data: {json.dumps({'type': 'audio', 'seq': 0, 'audio': b64})}\n\n"

@@ -39,7 +39,7 @@ import re as _re_task
 # fall through to a tool-less reply that then fabricated. The tool-capable agent is the
 # DEFAULT; unknown input fails safe into it, where the model can ground with tools.
 _SMALLTALK_PATTERNS = [
-    r"^(hi|hello|hey|yo|sup|hiya|howdy|hey there|hi there|hello there|heya)( kamil)?$",
+    r"^(hi|hello|hey|yo|sup|hiya|howdy|hey there|hi there|hello there|heya)( [a-z]+)?$",
     r"^good (morning|afternoon|evening|night)( kamil)?$",
     r"^(thanks|thank you|thanks a lot|thank you so much|ty|thx|cheers|appreciate it|much appreciated)$",
     r"^(ok|okay|k|kk|cool|nice|great|awesome|perfect|got it|sounds good|good|fine|alright|makes sense|understood|gotcha|no worries|np)$",
