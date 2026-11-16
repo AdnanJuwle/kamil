@@ -1,14 +1,48 @@
 @echo off
-echo Starting Kamil...
+REM start.bat -- bring Kamil up on Windows (single-model).
+REM
+REM One llama-server holding Huihui-Qwen3.8-27B-abliterated, which serves chat AND
+REM vision. The old two-model setup (DeepSeek on :8080 + Gemma voice on :8084) is
+REM gone; so is the separate vision model. See core/model.py.
+REM
+REM The llama-server flags are not written here -- core/model.py computes them from
+REM the GGUF present and this machine's VRAM, so this file never goes stale.
+setlocal
+cd /d "%~dp0"
 
-start "Kamil Primary [DeepSeek-R1-14B]" cmd /k "C:\llama.cpp\build\bin\llama-server.exe -m C:\kamil\models\deepseek-r1-distill-14b-q4.gguf -c 8192 -ngl 99 --host 0.0.0.0 --port 8080"
+set "PY=%~dp0venv313\Scripts\python.exe"
+if not exist "%PY%" set "PY=python"
 
-start "Kamil Voice [Gemma4-E4B]" cmd /k "C:\llama.cpp\build\bin\llama-server.exe -m C:\kamil\models\gemma4-e4b-q4.gguf -c 4096 -ngl 99 --host 0.0.0.0 --port 8084"
+echo [kamil] resolving model and llama-server...
+for /f "delims=" %%B in ('"%PY%" -m core.model --bin') do set "LLAMA=%%B"
+if not exist "%LLAMA%" (
+  echo [kamil] llama-server not found at "%LLAMA%".
+  echo [kamil] Huihui-Qwen3.8 needs a CURRENT llama.cpp ^(architecture "qwen35"^).
+  echo [kamil] Set KAMIL_LLAMA_SERVER, or build a fresh llama.cpp.
+  exit /b 1
+)
 
-echo Waiting for models to load...
-timeout /t 60 /nobreak > nul
+REM Collect the computed flags onto one line.
+set "ARGS="
+for /f "delims=" %%A in ('"%PY%" -m core.model --serve-args') do call set "ARGS=%%ARGS%% %%A"
+if not defined ARGS (
+  echo [kamil] could not compute llama-server flags:
+  "%PY%" -m core.model
+  exit /b 1
+)
 
-echo Starting Kamil Web Interface...
-start "Kamil Web" cmd /k "cd C:\kamil && venv313\Scripts\activate && python run.py"
+for /f "delims=" %%L in ('"%PY%" -c "from core import model; print(model.label())"') do set "LABEL=%%L"
+echo [kamil] model: %LABEL%
 
-echo Done. Open http://localhost:3000
+start "Kamil Model [%LABEL%]" cmd /k ""%LLAMA%"%ARGS%"
+
+echo [kamil] waiting for the model to load (a 27B takes a while)...
+timeout /t 90 /nobreak > nul
+
+echo [kamil] starting backend on :3000
+start "Kamil Backend" cmd /k ""%PY%" run.py"
+
+echo.
+echo [kamil] open http://localhost:3000
+echo [kamil] room watch is OFF on Windows by default; set KAMIL_ROOM_WATCH=1 to enable.
+endlocal

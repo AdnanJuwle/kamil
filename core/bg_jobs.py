@@ -32,10 +32,12 @@ def _label_for(command: str) -> str:
     return " ".join(parts[:2])[:40] if parts else "shell"
 
 
-def start(command: str, cwd: str = "C:\\kamil") -> dict:
+def start(command: str, cwd: str = None) -> dict:
     """Spawn `command` in the background. Returns {job_id, label} immediately."""
     global _counter
     from core import activity
+    from core.paths import KAMIL_ROOT
+    cwd = cwd or str(KAMIL_ROOT)
 
     with _lock:
         _counter += 1

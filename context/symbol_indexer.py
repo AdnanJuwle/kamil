@@ -224,8 +224,9 @@ class SymbolIndex:
         self.project_root = project_root
         self.project_name = project_name
         self.collection_name = f"{project_name}_symbols"
+        from core.paths import data_path
         self.arch_path = os.path.join(
-            r"C:\kamil\data\projects",
+            data_path("projects"),
             f"{project_name}_architecture.json"
         )
         self._arch: Optional[ProjectArchitecture] = None

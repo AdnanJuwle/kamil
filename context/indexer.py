@@ -10,7 +10,8 @@ from core.config import PROJECTS_ROOT
 PROJECTS_DIR = PROJECTS_ROOT
 import json
 
-INDEXED_CACHE_PATH = r"C:\kamil\data\indexed_projects.json"
+from core.paths import data_path, WORKSPACE_DIR
+INDEXED_CACHE_PATH = data_path("indexed_projects.json")
 
 class Indexer:
     def __init__(self):
@@ -106,7 +107,7 @@ class Indexer:
         candidates = [
             os.path.join(PROJECTS_DIR, project_name, 'navigation_ros'),
             os.path.join(PROJECTS_DIR, project_name),
-            os.path.join(r'C:\kamil\workspace', project_name),
+            os.path.join(str(WORKSPACE_DIR), project_name),
         ]
         for path in candidates:
             if os.path.isdir(path):
@@ -255,7 +256,7 @@ class Indexer:
 
         # Save to disk
         scan_path = os.path.join(
-            r"C:\kamil\data\projects",
+            data_path("projects"),
             f"{project_name}_scan.json"
         )
         os.makedirs(os.path.dirname(scan_path), exist_ok=True)
@@ -270,7 +271,7 @@ class Indexer:
     def get_project_structure(self, project_name: str) -> dict:
         """Load cached scan or run fresh scan."""
         scan_path = os.path.join(
-            r"C:\kamil\data\projects",
+            data_path("projects"),
             f"{project_name}_scan.json"
         )
         if os.path.exists(scan_path):

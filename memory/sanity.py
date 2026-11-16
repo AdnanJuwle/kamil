@@ -22,8 +22,9 @@ from datetime import datetime
 from dataclasses import dataclass, asdict
 from typing import Optional
 
-SANITY_LOG_PATH = r"C:\kamil\data\sanity_log.json"
-DRIFT_STATE_PATH = r"C:\kamil\data\drift_state.json"
+from core.paths import data_path
+SANITY_LOG_PATH = data_path("sanity_log.json")
+DRIFT_STATE_PATH = data_path("drift_state.json")
 
 # Thresholds
 MIN_COMPRESSION_LENGTH = 60       # chars — below this = model gave up

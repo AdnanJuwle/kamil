@@ -16,10 +16,11 @@ import time
 
 import httpx
 
-LLAMA_SERVER = os.getenv("KAMIL_LLAMA_SERVER", r"C:\llama.cpp\build\bin\llama-server.exe")
+from core.paths import free_port_cmd, llama_server_bin, MODELS_DIR as _MD
+LLAMA_SERVER = llama_server_bin()
 TTS_PORT = int(os.getenv("KAMIL_TTS_PORT", "8090"))
 TTS_URL = f"http://127.0.0.1:{TTS_PORT}"
-MODELS_DIR = os.getenv("KAMIL_MODELS_DIR", r"C:\kamil\models")
+MODELS_DIR = str(_MD)
 TTS_CTX = int(os.getenv("KAMIL_TTS_CTX", "4096"))
 IDLE_UNLOAD_SECONDS = int(os.getenv("KAMIL_TTS_IDLE", "900"))
 
@@ -96,9 +97,7 @@ def _kill_stale() -> None:
                     pass
     except Exception:
         try:
-            subprocess.run(["powershell", "-Command",
-                            f"Get-NetTCPConnection -LocalPort {TTS_PORT} -State Listen "
-                            f"-ErrorAction SilentlyContinue | ForEach-Object {{ Stop-Process -Id $_.OwningProcess -Force }}"],
+            subprocess.run(free_port_cmd(TTS_PORT),
                            capture_output=True, timeout=8)
         except Exception:
             pass

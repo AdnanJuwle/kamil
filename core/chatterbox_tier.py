@@ -13,8 +13,9 @@ import time
 
 import httpx
 
-KAMIL_ROOT = os.getenv("KAMIL_ROOT", r"C:\kamil")
-TTS_ENV_PY = os.getenv("KAMIL_CHATTERBOX_PY", os.path.join(KAMIL_ROOT, "tts_env", "Scripts", "python.exe"))
+from core.paths import KAMIL_ROOT as _KR, tts_env_python
+KAMIL_ROOT = str(_KR)
+TTS_ENV_PY = tts_env_python()
 SERVER_PY = os.path.join(KAMIL_ROOT, "chatterbox_server.py")
 CB_PORT = int(os.getenv("KAMIL_CHATTERBOX_PORT", "8095"))
 CB_URL = f"http://127.0.0.1:{CB_PORT}"

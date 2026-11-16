@@ -1,18 +1,19 @@
 r"""
-C:\kamil\context\religious_indexer.py
+context/religious_indexer.py
 Indexes Quran and Sahih Bukhari into ChromaDB for semantic retrieval.
 Run once to index, then queries are fast.
 """
 
 import os
 import sys
-sys.path.insert(0, r'C:\kamil')
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from pypdf import PdfReader
 from context.embedder import get_chroma_client, Embedder
 import re
 
-RELIGIOUS_DIR = r"C:\kamil\data\religious"
+from core.paths import data_path
+RELIGIOUS_DIR = data_path("religious")
 QURAN_PDF = os.path.join(RELIGIOUS_DIR, "Holy-Quran-English.pdf")
 BUKHARI_PDF = os.path.join(RELIGIOUS_DIR, "en_Sahih_Al-Bukhari.pdf")
 COLLECTION_NAME = "kamil_religious"
@@ -209,7 +210,7 @@ def is_religious_query(message: str) -> bool:
     ]
     return any(kw in msg for kw in explicit_islamic)
 
-if __name__ == "__main__":S
+if __name__ == "__main__":
     # Run indexing
     count = index_religious_texts()
     print(f"\nIndexing complete: {count} chunks ready")

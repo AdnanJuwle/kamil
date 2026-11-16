@@ -1,12 +1,25 @@
 """Tests for actions/tools.py — guardrails, edit_file, the create_task fix, parsing."""
+import tempfile
+from pathlib import Path
+
 import pytest
 
 from actions import tools
 
 
+# An absolute path that is OUTSIDE any write root on every OS. Hard-coding
+# C:\Windows made these tests pass only on Windows.
+OUTSIDE = str(Path(tempfile.gettempdir()).resolve() / "kamil-outside-fence" / "evil.txt")
+OUTSIDE_PY = str(Path(tempfile.gettempdir()).resolve() / "kamil-outside-fence" / "x.py")
+
+
 @pytest.fixture(autouse=True)
 def write_roots(tmp_path, monkeypatch):
     monkeypatch.setenv("KAMIL_WRITE_ROOTS", str(tmp_path))
+    # These tests describe the FENCED posture. System control (default on Linux,
+    # where Kamil owns the machine) deliberately lifts the fence, so pin it off
+    # here and test that mode separately below.
+    monkeypatch.setenv("KAMIL_SYSTEM_CONTROL", "0")
     tools.set_active_project_dir(None)   # no project fence unless a test sets one
     yield
     tools.set_active_project_dir(None)
@@ -22,7 +35,7 @@ def test_write_inside_root_ok(tmp_path):
 
 
 def test_write_outside_root_refused():
-    res = tools.execute_tool("write_file", {"path": "C:\\Windows\\evil.txt", "content": "x"})
+    res = tools.execute_tool("write_file", {"path": OUTSIDE, "content": "x"})
     assert res.success is False
     assert "outside the allowed write roots" in res.error
 
@@ -57,7 +70,7 @@ def test_read_source_allowed(tmp_path):
 
 
 def test_shell_secret_reference_refused():
-    res = tools.execute_tool("shell", {"command": "type C:\\kamil\\.env"})
+    res = tools.execute_tool("shell", {"command": "cat .env"})
     assert res.success is False and "secret" in res.error
 
 
@@ -90,7 +103,7 @@ def test_edit_file_missing_target(tmp_path):
 # ── shell guardrails ──────────────────────────────────────────────
 
 def test_shell_blocks_destructive_command():
-    res = tools.execute_tool("shell", {"command": "rm -rf C:\\"})
+    res = tools.execute_tool("shell", {"command": "rm -rf /"})
     assert res.success is False
     assert "blocked" in res.error.lower() or "refused" in res.error.lower()
 
@@ -187,10 +200,10 @@ def test_call_aware_confirmation_in_vs_out_of_fence(tmp_path, monkeypatch):
     assert rc("write_file", {"path": inside}) is False           # in fence -> auto (writes)
     # Out-of-fence writes no longer PAUSE: they auto-run and are hard-refused at
     # execution by the write-root fence, so a misleading "approve" prompt is skipped.
-    assert rc("edit_file", {"path": "C:\\Windows\\x.py"}) is False
-    assert rc("write_file", {"path": "C:\\kamil\\core\\orchestrator.py"}) is False
+    assert rc("edit_file", {"path": OUTSIDE_PY}) is False
+    assert rc("write_file", {"path": str(Path(tools._paths.KAMIL_ROOT) / "core" / "orchestrator.py")}) is False
     assert rc("shell", {"command": "echo hi"}) is False          # allowed -> auto
-    assert rc("shell", {"command": "rm -rf C:\\"}) is True        # denylisted -> pause
+    assert rc("shell", {"command": "rm -rf /"}) is True           # destructive -> pause
 
 
 # ── tolerant parsing ──────────────────────────────────────────────

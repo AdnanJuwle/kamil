@@ -31,7 +31,25 @@ class Permission(str, Enum):
 # When a project is loaded, writes are further confined to that project's directory.
 # Override with KAMIL_WRITE_ROOTS (semicolon-separated absolute paths).
 from core.config import PROJECTS_ROOT as _PROJECTS_ROOT
+from core import paths as _paths
 _DEFAULT_WRITE_ROOTS = _PROJECTS_ROOT
+
+
+# ── System-control mode ────────────────────────────────────────────
+# "Kamil is the computer." On the Fedora box Kamil OWNS the machine: the whole
+# filesystem is writable, sudo/systemd/package management are in reach, and the
+# write-root fence is lifted. What stays is a destructive-command gate — rm -rf,
+# dd, mkfs, shutdown and friends still pause for approval, so one bad generation
+# cannot wipe the install. Reads of secrets stay blocked either way (that is
+# Kamil's own privacy guarantee, not a sandbox).
+#
+# Default: ON for Linux, OFF for Windows/macOS (where Kamil is a guest, not the
+# owner). Force it either way with KAMIL_SYSTEM_CONTROL=1 / =0.
+def system_control() -> bool:
+    env = os.getenv("KAMIL_SYSTEM_CONTROL")
+    if env is not None:
+        return env.strip().lower() not in ("", "0", "false", "no", "off")
+    return _paths.IS_LINUX
 
 # When a project is open, writes/shell are confined to its directory (set by the
 # orchestrator via set_active_project_dir). None = no project loaded.
@@ -81,15 +99,42 @@ def _shell_touches_secret(command: str) -> bool:
         return True
     return bool(_re_secret.search(r'(\.env(\s|$|\.|")|\.(key|pem|pfx|p12)\b|\bid_rsa\b|\bcredentials\b)', low))
 
-# First-token commands that are never run, plus dangerous substrings.
+# First-token commands and substrings that destroy data or take the machine down.
+# Outside system-control mode these are REFUSED outright. Inside it they are a
+# confirmation gate: Kamil may run them, but only after the user approves the call.
 _BLOCKED_COMMANDS = {
-    "rm", "rmdir", "del", "rd", "format", "shutdown", "reboot",
-    "mkfs", "dd", "fdisk", "diskpart", "deltree", "erase",
+    # data loss
+    "rm", "rmdir", "del", "rd", "format", "deltree", "erase", "shred", "wipefs",
+    # disks / filesystems
+    "mkfs", "dd", "fdisk", "diskpart", "parted", "sgdisk", "mkswap", "cryptsetup",
+    # machine state
+    "shutdown", "reboot", "poweroff", "halt", "init", "kexec",
+    # accounts
+    "userdel", "groupdel", "passwd", "usermod", "visudo",
 }
 _BLOCKED_SUBSTRINGS = (
-    "rm -rf", "rm -r", "del /", "rmdir /s", "format ", ":\\ /q",
-    "> /dev/", "shutdown", "mkfs", "fdisk",
+    # recursive deletes
+    "rm -rf", "rm -fr", "rm -r", "del /", "rmdir /s",
+    # whole-disk / root targets
+    "format ", ":\\ /q", "of=/dev/", "> /dev/sd", "> /dev/nvme", "mkfs", "fdisk",
+    "wipefs", "/dev/sda", "/dev/nvme0n1",
+    # machine state
+    "shutdown", "poweroff", "systemctl isolate", "systemctl mask",
+    # permission / ownership blasts at a root
+    "chmod -r 777 /", "chmod 777 /", "chown -r root /", "chmod -r 000",
+    # package removals that can gut the system
+    "dnf remove -y", "dnf erase", "rpm -e", "apt-get remove -y", "apt purge",
+    "pacman -rns",
+    # fork bomb, and truncating a device/config
+    ":(){", ":|:&",
+    # history / repo destruction
+    "git push --force", "git reset --hard", "filter-repo",
 )
+
+# Prefixes that just elevate or wrap another command -- strip them before deciding
+# what the "first token" actually is, so `sudo rm` is caught like `rm`.
+_PRIVILEGE_PREFIXES = ("sudo", "doas", "pkexec", "runuser", "su", "env", "nohup",
+                       "time", "nice", "ionice", "setsid", "stdbuf")
 
 
 def _write_roots() -> list[Path]:
@@ -107,6 +152,9 @@ def _write_roots() -> list[Path]:
 
 
 def _within_write_roots(path: str) -> bool:
+    # System-control mode: Kamil owns the box. No fence.
+    if system_control():
+        return True
     try:
         p = Path(path).resolve()
     except Exception:
@@ -131,10 +179,12 @@ def _within_write_roots(path: str) -> bool:
 def _outside_roots_msg(path: str) -> str:
     """Refusal that steers the agent to open_project instead of guessing/falling back."""
     try:
-        low = str(Path(path).resolve()).replace("/", "\\").lower()
+        resolved = Path(path).resolve()
     except Exception:
-        low = str(path).replace("/", "\\").lower()
-    if low.startswith("c:\\kamil\\") or low == "c:\\kamil":
+        resolved = Path(str(path))
+    low = str(resolved).lower()
+    root_low = str(_paths.KAMIL_ROOT).lower()
+    if low == root_low or low.startswith(root_low + os.sep):
         return ("refused: that is KAMIL'S OWN SOURCE CODE — it is strictly read-only. You can "
                 "read and critique your own code but you cannot modify it; changes to your own "
                 "brain go through Adnan. Deliver your improvements as TEXT suggestions, not edits.")
@@ -147,17 +197,49 @@ def _outside_roots_msg(path: str) -> str:
             "with a full path inside it. Never guess a path or fall back to a scratch folder.")
 
 
-def _command_allowed(command: str) -> tuple[bool, str]:
+def _command_is_destructive(command: str) -> tuple[bool, str]:
+    """Does this command destroy data or take the machine down? Platform-agnostic:
+    matches on the real first token (privilege wrappers stripped) and on dangerous
+    substrings. Returns (True, reason) when it does."""
     stripped = command.strip()
     if not stripped:
-        return False, "empty command"
-    first = stripped.split()[0].lower().lstrip('"\'').split("\\")[-1].split("/")[-1]
+        return False, ""
+    tokens = [t for t in stripped.split() if t]
+    # walk past sudo/doas/env VAR=x/... to the command actually being run
+    idx = 0
+    while idx < len(tokens):
+        tok = tokens[idx].lower().lstrip('"\'').split("\\")[-1].split("/")[-1]
+        if tok in _PRIVILEGE_PREFIXES or "=" in tokens[idx]:
+            idx += 1
+            continue
+        if tok.startswith("-"):          # a flag belonging to the wrapper
+            idx += 1
+            continue
+        break
+    first = (tokens[idx].lower().lstrip('"\'').split("\\")[-1].split("/")[-1]
+             if idx < len(tokens) else "")
     if first in _BLOCKED_COMMANDS:
-        return False, f"command '{first}' is blocked for safety"
+        return True, f"'{first}' destroys data or changes machine state"
     low = stripped.lower()
     for bad in _BLOCKED_SUBSTRINGS:
         if bad in low:
-            return False, f"command contains blocked pattern '{bad.strip()}'"
+            return True, f"contains the destructive pattern '{bad.strip()}'"
+    return False, ""
+
+
+def _command_allowed(command: str) -> tuple[bool, str]:
+    """Hard allow/refuse at EXECUTION time. Under system control nothing is refused
+    for being destructive -- that is handled by the confirmation gate in
+    requires_confirmation_call(), so the user approves it rather than Kamil
+    declining it. Outside system control the old wall stands."""
+    stripped = command.strip()
+    if not stripped:
+        return False, "empty command"
+    if system_control():
+        return True, ""
+    destructive, reason = _command_is_destructive(command)
+    if destructive:
+        return False, f"command blocked for safety: {reason}"
     return True, ""
 
 
@@ -253,14 +335,36 @@ def _see(params: dict) -> "ToolResult":
 
 
 def _capture_webcam(camera: int = 0):
-    """Grab one frame from a local webcam as JPEG bytes. (answer, error)."""
+    """Grab one frame from a local webcam as JPEG bytes. (answer, error).
+
+    When the 24x7 room watcher is running it OWNS the camera -- a V4L2 device
+    generally cannot be opened twice, so opening our own handle here would either
+    fail or steal the device from the watcher. Take the watcher's newest frame
+    instead; it is at most a fraction of a second old."""
+    try:
+        from core import room_watch
+        if room_watch.is_running():
+            frame = room_watch.latest_frame_jpeg(max_age_s=5.0)
+            if frame:
+                return frame, None
+            # watcher is up but has no fresh frame (camera dropped) -- say so rather
+            # than fighting it for the device
+            st = room_watch.status()
+            return None, ("the room watcher holds the camera but has no recent frame"
+                          + (f" ({st['error']})" if st.get("error") else ""))
+    except Exception:
+        pass
     try:
         import cv2
     except Exception:
         return None, "webcam capture needs opencv (pip install opencv-python)"
     cap = None
     try:
-        cap = cv2.VideoCapture(camera, cv2.CAP_DSHOW)   # DSHOW is fast/reliable on Windows
+        from core import paths as _p
+        backend = (cv2.CAP_DSHOW if _p.IS_WINDOWS else
+                   getattr(cv2, "CAP_V4L2", 0) if _p.IS_LINUX else
+                   getattr(cv2, "CAP_AVFOUNDATION", 0))
+        cap = cv2.VideoCapture(camera, backend) if backend else cv2.VideoCapture(camera)
         if not cap.isOpened():
             cap.release()
             cap = cv2.VideoCapture(camera)              # fall back to default backend
@@ -376,6 +480,11 @@ def _is_shell_file_write(command: str) -> bool:
     writers, or a `> file` redirect. Files must go through write_file/edit_file (which
     show a diff and honour the write roots), not raw shell. (Odysseus enforces the
     same: bash is read-only inspection.)"""
+    # Under system control, editing files from the shell IS the job (sed -i on a
+    # unit file, tee into /etc). The write-root fence no longer applies either, so
+    # forcing everything through write_file would only get in the way.
+    if system_control():
+        return False
     import re as _re
     low = command.strip().lower()
     if _re.search(r'<<-?\s*[\'"]?\w', low):                       # heredoc
@@ -556,7 +665,7 @@ def _list_directory(params: dict) -> ToolResult:
 
 def _shell(params: dict) -> ToolResult:
     command = params["command"]
-    cwd = params.get("cwd", "C:\\kamil")
+    cwd = params.get("cwd") or str(_paths.KAMIL_ROOT)
     timeout = params.get("timeout", 30)
     allowed, reason = _command_allowed(command)
     if not allowed:
@@ -588,10 +697,12 @@ def _shell(params: dict) -> ToolResult:
         result = subprocess.run(
             command,
             shell=True,
+            executable=_paths.default_shell(),   # bash on POSIX, cmd on Windows
             capture_output=True,
             text=True,
             cwd=cwd,
-            timeout=timeout
+            timeout=timeout,
+            errors="replace",
         )
         return ToolResult(
             success=result.returncode == 0,
@@ -811,6 +922,273 @@ def _open_project(params: dict) -> ToolResult:
                       output={"opened": match, "current": match})
 
 
+def _room_history(params: dict) -> ToolResult:
+    """What the webcam has seen. Kamil's recall for the room: 'was anyone here while
+    I was away', 'what happened this morning'."""
+    from core import room_watch
+    try:
+        hours = int(params.get("hours", 12))
+    except (TypeError, ValueError):
+        hours = 12
+    try:
+        limit = min(int(params.get("limit", 20)), 100)
+    except (TypeError, ValueError):
+        limit = 20
+    from datetime import datetime, timedelta
+    since = (datetime.now() - timedelta(hours=max(hours, 1))).isoformat(timespec="seconds")
+    events = room_watch.recent_events(limit=limit, since=since)
+    st = room_watch.status()
+    if not st.get("enabled") and not st.get("alive"):
+        return ToolResult(success=True, tool="room_history", params=params,
+                          output={"watching": False,
+                                  "note": ("the room watcher is not running on this "
+                                           "machine, so there is no camera history. "
+                                           + (st.get("error") or "")).strip(),
+                                  "events": []})
+    return ToolResult(success=True, tool="room_history", params=params,
+                      output={"watching": bool(st.get("alive")),
+                              "recording_now": bool(st.get("recording")),
+                              "window_hours": hours,
+                              "count": len(events),
+                              "events": [
+                                  {"at": e["started"], "seconds": e["duration_s"],
+                                   "saw": e["description"] or "(not described)",
+                                   "who": e["faces"] or "", "clip": e["clip"]}
+                                  for e in events],
+                              })
+
+
+# ── System control tools ───────────────────────────────────────────
+# Kamil can already do all of this through `shell`, but a typed tool is reliable
+# where a generated command line is not: the verb is validated, the output is
+# parsed, and read-only calls (status, list, search) run without pausing while
+# state-changing ones ask first. All three refuse unless system_control() is on.
+
+_SERVICE_READ_VERBS = {"status", "is-active", "is-enabled", "list"}
+_SERVICE_WRITE_VERBS = {"start", "stop", "restart", "reload", "enable", "disable"}
+
+_PKG_READ_VERBS = {"search", "info", "list", "check-update"}
+_PKG_WRITE_VERBS = {"install", "remove", "update", "upgrade"}
+
+_PROC_READ_VERBS = {"list", "find", "info"}
+_PROC_WRITE_VERBS = {"kill", "term"}
+
+
+def _privileged_call_is_read_only(tool_name: str, params: dict) -> bool:
+    """True when this specific call only observes. Drives the confirmation gate so
+    `service_control status sshd` runs straight through but `stop sshd` asks."""
+    verb = str((params or {}).get("action", "")).strip().lower()
+    if tool_name == "service_control":
+        return verb in _SERVICE_READ_VERBS
+    if tool_name == "package_manager":
+        return verb in _PKG_READ_VERBS
+    if tool_name == "process_control":
+        return verb in _PROC_READ_VERBS
+    return False
+
+
+def _require_system_control(tool: str) -> Optional[ToolResult]:
+    if system_control():
+        return None
+    return ToolResult(
+        success=False, tool=tool, params={},
+        error=("refused: system control is off on this machine. Kamil only manages "
+               "services/packages/processes where it owns the box (Linux, or "
+               "KAMIL_SYSTEM_CONTROL=1)."))
+
+
+def _run_privileged(argv: list[str], tool: str, params: dict,
+                    timeout: int = 120) -> ToolResult:
+    """Run a system command as an argv list (never shell=True -- no injection from a
+    generated service or package name) and return its output."""
+    try:
+        r = subprocess.run(argv, capture_output=True, text=True,
+                           timeout=timeout, errors="replace")
+        return ToolResult(
+            success=r.returncode == 0, tool=tool, params=params,
+            output={"command": " ".join(argv), "stdout": r.stdout[:4000],
+                    "stderr": r.stderr[:1500], "returncode": r.returncode})
+    except FileNotFoundError:
+        return ToolResult(success=False, tool=tool, params=params,
+                          error=f"{argv[0]} is not installed on this system")
+    except subprocess.TimeoutExpired:
+        return ToolResult(success=False, tool=tool, params=params,
+                          error=f"timed out after {timeout}s")
+    except Exception as e:
+        return ToolResult(success=False, tool=tool, params=params, error=str(e))
+
+
+def _sudo(argv: list[str]) -> list[str]:
+    """Prefix sudo when not already root. Needs passwordless sudo for the unit --
+    see docs/FEDORA.md; otherwise the call fails with a clear sudo error."""
+    if _paths.IS_WINDOWS:
+        return argv
+    try:
+        if os.geteuid() == 0:
+            return argv
+    except AttributeError:
+        return argv
+    return ["sudo", "-n"] + argv
+
+
+def _service_control(params: dict) -> ToolResult:
+    guard = _require_system_control("service_control")
+    if guard:
+        return guard
+    action = str(params.get("action", "")).strip().lower()
+    unit = str(params.get("unit", "")).strip()
+    if action not in (_SERVICE_READ_VERBS | _SERVICE_WRITE_VERBS):
+        return ToolResult(success=False, tool="service_control", params=params,
+                          error=f"unknown action '{action}'. Use one of: "
+                                + ", ".join(sorted(_SERVICE_READ_VERBS | _SERVICE_WRITE_VERBS)))
+    if action != "list" and not unit:
+        return ToolResult(success=False, tool="service_control", params=params,
+                          error="a unit name is required (e.g. 'sshd' or 'kamil.service')")
+    if _paths.IS_LINUX:
+        if action == "list":
+            argv = ["systemctl", "list-units", "--type=service", "--no-pager", "--plain"]
+        else:
+            argv = ["systemctl", "--no-pager", action, unit]
+            if action in _SERVICE_WRITE_VERBS:
+                argv = _sudo(argv)
+    elif _paths.IS_WINDOWS:
+        win = {"start": "start", "stop": "stop", "restart": "restart",
+               "status": "query", "list": "query"}.get(action)
+        if win is None:
+            return ToolResult(success=False, tool="service_control", params=params,
+                              error=f"'{action}' is not supported for Windows services")
+        argv = ["sc", win] + ([unit] if action != "list" else ["state=", "all"])
+    else:
+        argv = ["launchctl", "list"] if action == "list" else ["launchctl", action, unit]
+    return _run_privileged(argv, "service_control", params)
+
+
+def _detect_package_manager() -> Optional[str]:
+    import shutil as _sh
+    for mgr in ("dnf", "dnf5", "apt-get", "pacman", "zypper", "apk", "brew"):
+        if _sh.which(mgr):
+            return mgr
+    return None
+
+
+def _package_manager(params: dict) -> ToolResult:
+    guard = _require_system_control("package_manager")
+    if guard:
+        return guard
+    action = str(params.get("action", "")).strip().lower()
+    pkg = str(params.get("package", "")).strip()
+    if action not in (_PKG_READ_VERBS | _PKG_WRITE_VERBS):
+        return ToolResult(success=False, tool="package_manager", params=params,
+                          error=f"unknown action '{action}'. Use one of: "
+                                + ", ".join(sorted(_PKG_READ_VERBS | _PKG_WRITE_VERBS)))
+    if action in ("install", "remove", "search", "info") and not pkg:
+        return ToolResult(success=False, tool="package_manager", params=params,
+                          error="a package name is required for that action")
+    mgr = _detect_package_manager()
+    if mgr is None:
+        return ToolResult(success=False, tool="package_manager", params=params,
+                          error="no supported package manager found "
+                                "(dnf, apt-get, pacman, zypper, apk, brew)")
+    verbs = {
+        "dnf":     {"install": ["install", "-y"], "remove": ["remove", "-y"],
+                    "search": ["search"], "info": ["info"],
+                    "update": ["upgrade", "-y"], "upgrade": ["upgrade", "-y"],
+                    "list": ["list", "--installed"], "check-update": ["check-update"]},
+        "apt-get": {"install": ["install", "-y"], "remove": ["remove", "-y"],
+                    "search": ["--names-only", "search"], "info": ["show"],
+                    "update": ["update"], "upgrade": ["upgrade", "-y"],
+                    "list": ["list", "--installed"], "check-update": ["update"]},
+        "pacman":  {"install": ["-S", "--noconfirm"], "remove": ["-R", "--noconfirm"],
+                    "search": ["-Ss"], "info": ["-Si"], "update": ["-Syu", "--noconfirm"],
+                    "upgrade": ["-Syu", "--noconfirm"], "list": ["-Q"],
+                    "check-update": ["-Qu"]},
+    }
+    table = verbs.get("dnf" if mgr == "dnf5" else mgr, verbs["dnf"])
+    sub = table.get(action)
+    if sub is None:
+        return ToolResult(success=False, tool="package_manager", params=params,
+                          error=f"'{action}' is not mapped for {mgr}")
+    argv = [mgr] + sub + ([pkg] if pkg and action not in ("list", "check-update",
+                                                          "update", "upgrade") else [])
+    if action in _PKG_WRITE_VERBS:
+        argv = _sudo(argv)
+    return _run_privileged(argv, "package_manager", params, timeout=600)
+
+
+def _process_control(params: dict) -> ToolResult:
+    guard = _require_system_control("process_control")
+    if guard:
+        return guard
+    action = str(params.get("action", "")).strip().lower()
+    target = str(params.get("target", "")).strip()
+    if action not in (_PROC_READ_VERBS | _PROC_WRITE_VERBS):
+        return ToolResult(success=False, tool="process_control", params=params,
+                          error=f"unknown action '{action}'. Use one of: "
+                                + ", ".join(sorted(_PROC_READ_VERBS | _PROC_WRITE_VERBS)))
+    try:
+        import psutil
+    except ImportError:
+        return ToolResult(success=False, tool="process_control", params=params,
+                          error="psutil is required for process_control")
+
+    if action in ("list", "find"):
+        rows = []
+        for p in psutil.process_iter(["pid", "name", "username",
+                                      "cpu_percent", "memory_info"]):
+            try:
+                i = p.info
+                if target and target.lower() not in str(i.get("name", "")).lower():
+                    continue
+                mem = i.get("memory_info")
+                rows.append({"pid": i["pid"], "name": i.get("name"),
+                             "user": i.get("username"),
+                             "cpu": i.get("cpu_percent"),
+                             "rss_mb": round(mem.rss / 1e6, 1) if mem else None})
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                continue
+        rows.sort(key=lambda r: (r["rss_mb"] or 0), reverse=True)
+        return ToolResult(success=True, tool="process_control", params=params,
+                          output={"count": len(rows), "processes": rows[:40]})
+
+    if not target:
+        return ToolResult(success=False, tool="process_control", params=params,
+                          error="a pid or process name is required")
+    if action == "info":
+        try:
+            p = psutil.Process(int(target))
+            return ToolResult(success=True, tool="process_control", params=params,
+                              output={"pid": p.pid, "name": p.name(),
+                                      "status": p.status(), "cmdline": p.cmdline()[:20],
+                                      "user": p.username(),
+                                      "created": p.create_time()})
+        except Exception as e:
+            return ToolResult(success=False, tool="process_control", params=params,
+                              error=str(e))
+
+    # kill / term
+    killed, failed = [], []
+    targets = []
+    if target.isdigit():
+        targets = [int(target)]
+    else:
+        for p in psutil.process_iter(["pid", "name"]):
+            if str(p.info.get("name", "")).lower() == target.lower():
+                targets.append(p.info["pid"])
+    if not targets:
+        return ToolResult(success=False, tool="process_control", params=params,
+                          error=f"no process matched '{target}'")
+    for pid in targets:
+        try:
+            proc = psutil.Process(pid)
+            proc.kill() if action == "kill" else proc.terminate()
+            killed.append(pid)
+        except Exception as e:
+            failed.append({"pid": pid, "error": str(e)})
+    return ToolResult(success=not failed or bool(killed), tool="process_control",
+                      params=params, output={"action": action, "killed": killed,
+                                             "failed": failed})
+
+
 def _get_system_info(params: dict) -> ToolResult:
     import platform
     try:
@@ -820,8 +1198,22 @@ def _get_system_info(params: dict) -> ToolResult:
             "cpu_percent": psutil.cpu_percent(interval=1),
             "ram_used_gb": round(psutil.virtual_memory().used / 1e9, 2),
             "ram_total_gb": round(psutil.virtual_memory().total / 1e9, 2),
-            "disk_free_gb": round(psutil.disk_usage("C:\\").free / 1e9, 2),
+            "disk_free_gb": round(psutil.disk_usage(_paths.disk_root()).free / 1e9, 2),
+            "boot_time": __import__("datetime").datetime.fromtimestamp(
+                psutil.boot_time()).isoformat(timespec="seconds"),
+            "load_avg": (list(os.getloadavg()) if hasattr(os, "getloadavg") else None),
         }
+        info["release"] = platform.release()
+        info["system_control"] = system_control()
+        if _paths.IS_LINUX:
+            try:
+                with open("/etc/os-release", encoding="utf-8") as f:
+                    for line in f:
+                        if line.startswith("PRETTY_NAME="):
+                            info["distro"] = line.split("=", 1)[1].strip().strip('"')
+                            break
+            except OSError:
+                pass
     except ImportError:
         info = {"os": platform.system(), "note": "install psutil for full info"}
     return ToolResult(success=True, output=info, tool="system_info", params=params)
@@ -874,7 +1266,8 @@ TOOLS: dict[str, Tool] = {
         description="Execute a shell command",
         params=[
             ToolParam("command", "string", required=True, description="Command to run"),
-            ToolParam("cwd", "string", required=False, description="Working directory", default="C:\\kamil"),
+            ToolParam("cwd", "string", required=False, description="Working directory",
+                      default=str(_paths.KAMIL_ROOT)),
             ToolParam("timeout", "int", required=False, description="Timeout in seconds", default=30),
             ToolParam("background", "bool", required=False, description=(
                 "Run without waiting — for long commands (installs, builds, downloads) that "
@@ -1097,6 +1490,64 @@ TOOLS: dict[str, Tool] = {
         permission=Permission.AUTO,
         execute=_open_project
     ),
+    "room_history": Tool(
+        name="room_history",
+        description=("What the webcam has seen in the room, newest first, with the "
+                     "time, how long the motion lasted, and a description of what "
+                     "was happening. Use this when asked whether anyone was around, "
+                     "what happened earlier, or who came in."),
+        params=[
+            ToolParam("hours", "int", required=False, default=12,
+                      description="How far back to look. Default 12."),
+            ToolParam("limit", "int", required=False, default=20,
+                      description="Maximum events to return (cap 100)."),
+        ],
+        permission=Permission.AUTO,
+        execute=_room_history
+    ),
+    "service_control": Tool(
+        name="service_control",
+        description=("Manage system services (systemd on Linux). status/is-active/"
+                     "is-enabled/list observe and run immediately; start/stop/restart/"
+                     "reload/enable/disable change the machine and ask first."),
+        params=[
+            ToolParam("action", "string", required=True, description=(
+                "status | is-active | is-enabled | list | start | stop | restart | "
+                "reload | enable | disable")),
+            ToolParam("unit", "string", required=False, description=(
+                "Service/unit name, e.g. 'sshd' or 'kamil.service'. Not needed for list.")),
+        ],
+        permission=Permission.CONFIRM,
+        execute=_service_control
+    ),
+    "package_manager": Tool(
+        name="package_manager",
+        description=("Install, remove or query system packages. Auto-detects dnf/"
+                     "apt-get/pacman/zypper. search/info/list/check-update run "
+                     "immediately; install/remove/update ask first."),
+        params=[
+            ToolParam("action", "string", required=True, description=(
+                "search | info | list | check-update | install | remove | update | upgrade")),
+            ToolParam("package", "string", required=False,
+                      description="Package name (not needed for list/update/check-update)"),
+        ],
+        permission=Permission.CONFIRM,
+        execute=_package_manager
+    ),
+    "process_control": Tool(
+        name="process_control",
+        description=("Inspect or kill processes. list/find/info observe and run "
+                     "immediately; kill/term ask first. target is a pid or a "
+                     "process name."),
+        params=[
+            ToolParam("action", "string", required=True,
+                      description="list | find | info | kill | term"),
+            ToolParam("target", "string", required=False,
+                      description="pid, or a process name to match"),
+        ],
+        permission=Permission.CONFIRM,
+        execute=_process_control
+    ),
 }
 
 
@@ -1267,8 +1718,15 @@ def requires_confirmation_call(tool_name: str, params: dict) -> bool:
         # out-of-root write is misleading, since it's refused either way.
         return False
     if tool_name == "shell":
-        ok, _ = _command_allowed(params.get("command", ""))
+        cmd = params.get("command", "")
+        if system_control():
+            # Nothing is refused; destructive calls pause for the user instead.
+            destructive, _ = _command_is_destructive(cmd)
+            return destructive
+        ok, _ = _command_allowed(cmd)
         return not ok
+    if tool_name in ("service_control", "package_manager", "process_control"):
+        return not _privileged_call_is_read_only(tool_name, params)
     return True  # any other approval-gated tool still confirms
 
 

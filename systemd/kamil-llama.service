@@ -1,0 +1,24 @@
+[Unit]
+# The one model: Huihui-Qwen3.8-27B-abliterated, serving chat AND vision on :8080.
+# Flags are computed at start by core/model.py (which fits them to this GPU via
+# core/hwfit), so this unit never needs editing when the quant or card changes.
+Description=Kamil model server (llama.cpp, single multimodal model)
+Documentation=file:%h/kamil/docs/FEDORA.md
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/kamil
+Environment=PYTHONUNBUFFERED=1
+# Resolve the binary and flags through Kamil's own resolver, then exec the server.
+ExecStart=/bin/bash -c 'exec "$(%h/kamil/venv313/bin/python3 -m core.model --bin)" $(%h/kamil/venv313/bin/python3 -m core.model --serve-args | tr "\\n" " ")'
+Restart=on-failure
+RestartSec=20
+# A 27B takes minutes to load from cold page cache; do not call that a failure.
+TimeoutStartSec=900
+KillSignal=SIGINT
+StandardOutput=append:%h/kamil/data/logs/llama.log
+StandardError=append:%h/kamil/data/logs/llama.log
+
+[Install]
+WantedBy=default.target

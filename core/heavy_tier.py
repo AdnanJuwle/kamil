@@ -24,11 +24,12 @@ from core import hwfit
 import glob
 import re
 
-LLAMA_SERVER = os.getenv("KAMIL_LLAMA_SERVER", r"C:\llama.cpp\build\bin\llama-server.exe")
+from core.paths import free_port_cmd, llama_server_bin, model_path, MODELS_DIR as _MD
+LLAMA_SERVER = llama_server_bin()
 HEAVY_PORT = int(os.getenv("KAMIL_HEAVY_PORT", "8086"))
 HEAVY_URL = f"http://127.0.0.1:{HEAVY_PORT}"
-MODELS_DIR = os.getenv("KAMIL_MODELS_DIR", r"C:\kamil\models")
-_HEAVY_FALLBACK = r"C:\kamil\models\qwen2.5-coder-14b-q4.gguf"
+MODELS_DIR = str(_MD)
+_HEAVY_FALLBACK = model_path("qwen2.5-coder-14b-q4.gguf")
 CHAT_VRAM_GB = float(os.getenv("KAMIL_CHAT_VRAM_GB", "8"))     # chat 8B + whisper-large + embedder/kokoro
 IDLE_UNLOAD_SECONDS = int(os.getenv("KAMIL_HEAVY_IDLE", "600"))
 
@@ -184,9 +185,7 @@ def _kill_stale() -> None:
                     pass
     except Exception:
         try:
-            subprocess.run(["powershell", "-Command",
-                            f"Get-NetTCPConnection -LocalPort {HEAVY_PORT} -State Listen "
-                            f"-ErrorAction SilentlyContinue | ForEach-Object {{ Stop-Process -Id $_.OwningProcess -Force }}"],
+            subprocess.run(free_port_cmd(HEAVY_PORT),
                            capture_output=True, timeout=8)
         except Exception:
             pass

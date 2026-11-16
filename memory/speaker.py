@@ -24,8 +24,9 @@ from datetime import datetime
 from dataclasses import dataclass, asdict
 from typing import Optional
 
-SPEAKERS_PATH = r"C:\kamil\data\speakers.json"
-ENROLLMENT_SAMPLES_DIR = r"C:\kamil\data\voice_samples"
+from core.paths import data_path
+SPEAKERS_PATH = data_path("speakers.json")
+ENROLLMENT_SAMPLES_DIR = data_path("voice_samples")
 
 # Similarity thresholds
 OWNER_THRESHOLD = 0.78      # high confidence required for owner

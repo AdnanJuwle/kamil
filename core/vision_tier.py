@@ -22,11 +22,34 @@ import time
 
 import httpx
 
-LLAMA_SERVER = os.getenv("KAMIL_LLAMA_SERVER", r"C:\llama.cpp\build\bin\llama-server.exe")
+from core.paths import free_port_cmd, llama_server_bin, MODELS_DIR as _MD
+LLAMA_SERVER = llama_server_bin()
 VISION_PORT = int(os.getenv("KAMIL_VISION_PORT", "8098"))
 VISION_URL = f"http://127.0.0.1:{VISION_PORT}"
-MODELS_DIR = os.getenv("KAMIL_MODELS_DIR", r"C:\kamil\models")
+MODELS_DIR = str(_MD)
 VISION_CTX = int(os.getenv("KAMIL_VISION_CTX", "8192"))
+
+
+# ── One model, two senses ──────────────────────────────────────────
+# This tier was built when seeing meant loading a SECOND model (Qwen3-VL-8B) onto
+# the GPU next to the chat model, with an idle timer to give the VRAM back.
+# Huihui-Qwen3.8-27B-abliterated is itself multimodal, so when it is the primary
+# there is nothing to spawn: the server already holding the conversation can look
+# at a frame. Every function below short-circuits to that server, which is what
+# makes a 24x7 webcam watcher affordable -- no load/unload churn per motion event.
+def _use_primary() -> bool:
+    try:
+        from core import model as _model
+        return _model.is_multimodal()
+    except Exception:
+        return False
+
+
+_USE_PRIMARY = _use_primary()
+if _USE_PRIMARY:
+    from core.config import LLAMA_SERVER_URL as _PRIMARY_URL
+    VISION_URL = _PRIMARY_URL
+    VISION_PORT = int(_PRIMARY_URL.rsplit(":", 1)[-1].split("/")[0] or VISION_PORT)
 IDLE_UNLOAD_SECONDS = int(os.getenv("KAMIL_VISION_IDLE", "600"))
 
 _proc: subprocess.Popen | None = None
@@ -88,12 +111,17 @@ def mmproj_path() -> str | None:
 
 
 def available() -> bool:
-    """Vision works only when BOTH the VLM weights and its mmproj are present."""
+    """Vision works only when BOTH the weights and their mmproj are present. With a
+    multimodal primary that is already true by construction."""
+    if _USE_PRIMARY:
+        return True
     return bool(vision_model()) and os.path.isfile(vision_model()) and mmproj_path() is not None
 
 
 def missing_reason() -> str:
     """Human explanation of why vision isn't available (for the UI / logs)."""
+    if _USE_PRIMARY:
+        return ""
     if not (vision_model() and os.path.isfile(vision_model())):
         return "no vision model GGUF in models/ (need e.g. Qwen3-VL-8B-Instruct-*.gguf)"
     if mmproj_path() is None:
@@ -105,6 +133,9 @@ def label() -> str:
     env = os.getenv("KAMIL_VISION_LABEL")
     if env:
         return env
+    if _USE_PRIMARY:
+        from core import model as _model
+        return _model.label()
     vm = vision_model()
     if not vm:
         return "vision"
@@ -143,6 +174,8 @@ def _serve_args() -> list[str]:
 
 
 def _arm_idle() -> None:
+    if _USE_PRIMARY:
+        return          # the primary has no idle timer; it stays warm
     global _idle_timer
     with _lock:
         if _idle_timer is not None:
@@ -172,16 +205,18 @@ def _kill_stale() -> None:
                     pass
     except Exception:
         try:
-            subprocess.run(["powershell", "-Command",
-                            f"Get-NetTCPConnection -LocalPort {VISION_PORT} -State Listen "
-                            f"-ErrorAction SilentlyContinue | ForEach-Object {{ Stop-Process -Id $_.OwningProcess -Force }}"],
+            subprocess.run(free_port_cmd(VISION_PORT),
                            capture_output=True, timeout=8)
         except Exception:
             pass
 
 
 def ensure_loaded(timeout: int = 240) -> bool:
-    """Spawn the vision model if not already running. Returns True when healthy."""
+    """Spawn the vision model if not already running. Returns True when healthy.
+    With a multimodal primary there is nothing to spawn -- just report whether the
+    one server is up."""
+    if _USE_PRIMARY:
+        return _is_running()
     global _proc
     with _lock:
         if _proc is None and _is_running():
@@ -220,6 +255,9 @@ def ensure_loaded(timeout: int = 240) -> bool:
 
 
 def unload() -> None:
+    # Never unload the primary -- it is the conversation.
+    if _USE_PRIMARY:
+        return
     global _proc, _idle_timer
     with _lock:
         if _idle_timer is not None:

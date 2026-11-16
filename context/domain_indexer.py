@@ -6,7 +6,7 @@ Supports PDF, EPUB, MOBI, CHM formats.
 Uses folder structure as domain tag automatically.
 
 Collection: kamil_domain
-Folder structure: C:\\kamil\\data\\domain_books\\{domain}\\{book}.{ext}
+Folder structure: <kamil>/data/domain_books/{domain}/{book}.{ext}
 
 Metadata schema per chunk:
 {
@@ -26,11 +26,12 @@ import os
 import re
 import sys
 import time
-sys.path.insert(0, r"C:\kamil")
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from context.embedder import get_chroma_client, Embedder
 
-DOMAIN_BOOKS_DIR = r"C:\kamil\data\domain_books"
+from core.paths import data_path
+DOMAIN_BOOKS_DIR = data_path("domain_books")
 COLLECTION_NAME  = "kamil_domain"
 CHUNK_SIZE       = 800
 CHUNK_OVERLAP    = 150

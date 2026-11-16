@@ -24,7 +24,8 @@ from dataclasses import dataclass, field, asdict
 from typing import Optional
 from datetime import datetime
 
-CACHE_PATH = r"C:\kamil\data\context_cache.json"
+from core.paths import data_path
+CACHE_PATH = data_path("context_cache.json")
 
 # Token budget estimates (rough: 1 token ≈ 4 chars)
 # ~10k tokens of raw recent conversation kept live (we run a 32k context window),

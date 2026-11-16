@@ -2,9 +2,9 @@ import sys
 import os
 os.environ["TRANSFORMERS_OFFLINE"] = "1"
 os.environ["HF_DATASETS_OFFLINE"] = "1"
-sys.path.insert(0, r'C:\kamil')
-from fastapi import FastAPI, Request, UploadFile, File, Form
-from fastapi.responses import HTMLResponse, StreamingResponse
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+from fastapi import FastAPI, Request, UploadFile, File, Form, Body
+from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse, Response
 from pydantic import BaseModel
 from core.orchestrator import Orchestrator
 from core import activity
@@ -35,8 +35,9 @@ import soundfile as sf
 import numpy as np
 import io
 
-KOKORO_MODEL = r"C:\kamil\voices\kokoro-v1.0.onnx"
-KOKORO_VOICES = r"C:\kamil\voices\voices-v1.0.bin"
+from core.paths import VOICES_DIR, MODELS_DIR as _MODELS_DIR
+KOKORO_MODEL = str(VOICES_DIR / "kokoro-v1.0.onnx")
+KOKORO_VOICES = str(VOICES_DIR / "voices-v1.0.bin")
 KAMIL_VOICE = os.getenv("KAMIL_VOICE", "am_onyx")
 
 
@@ -139,7 +140,7 @@ def get_whisper():
         # LOCAL copy (models/whisper-large-v3) so load never hits the HF Hub (which can
         # hang) and there are no Windows symlink issues.
         size = os.getenv("KAMIL_WHISPER_SIZE", "large-v3")
-        local = r"C:\kamil\models\whisper-large-v3"
+        local = str(_MODELS_DIR / "whisper-large-v3")
         # Use the local large-v3 copy only if it's fully downloaded; else fall back to
         # 'small' (always cached) so the app never hangs/breaks on a partial download.
         if size == "large-v3":
@@ -271,8 +272,19 @@ async def lifespan(app):
     if HEARTBEAT_ON:
         threading.Thread(target=_heartbeat_loop, daemon=True).start()
         print(f"[heartbeat] presence loop started ({HEARTBEAT_SECONDS}s)")
+    # The eye opens with the backend and stays open. On Fedora this is on by
+    # default (KAMIL_ROOM_WATCH); elsewhere it is opt-in. It owns the camera for
+    # the whole session -- see core/room_watch.py.
+    from core import room_watch
+    if room_watch.ENABLED:
+        if room_watch.start():
+            print(f"[room] watching camera {room_watch.CAMERA_INDEX} "
+                  f"-> {room_watch.ROOM_DIR} (retention {room_watch.RETENTION_DAYS}d)")
+        else:
+            print(f"[room] not started: {room_watch.status().get('error')}")
     yield
     _heartbeat_stop.set()
+    room_watch.stop()
     indexer.stop_watching()
 
 app = FastAPI(lifespan=lifespan)
@@ -486,6 +498,56 @@ async def actions_clear():
     from core import action_log
     action_log.clear()
     return {"status": "cleared"}
+
+@app.get("/room/status")
+async def room_status():
+    """Is the eye open, what has it seen, how much disk is it using."""
+    from core import room_watch
+    return room_watch.status()
+
+
+@app.get("/room/events")
+async def room_events(hours: int = 12, limit: int = 30):
+    """The room's motion log, newest first, with descriptions."""
+    from core import room_watch
+    from datetime import datetime, timedelta
+    since = (datetime.now() - timedelta(hours=max(hours, 1))).isoformat(timespec="seconds")
+    return {"events": room_watch.recent_events(limit=min(limit, 200), since=since)}
+
+
+@app.get("/room/frame")
+async def room_frame():
+    """The newest frame the watcher holds, as a JPEG. The watcher owns the camera,
+    so this is how the UI shows a live view without fighting it for the device."""
+    from core import room_watch
+    data = room_watch.latest_frame_jpeg(max_age_s=10.0)
+    if not data:
+        return JSONResponse({"error": room_watch.status().get("error")
+                             or "no frame available"}, status_code=503)
+    return Response(content=data, media_type="image/jpeg",
+                    headers={"Cache-Control": "no-store"})
+
+
+@app.post("/room/control")
+async def room_control(payload: dict = Body(...)):
+    """Start or stop watching. `force` starts it even where it is off by default."""
+    from core import room_watch
+    action = str(payload.get("action", "")).lower()
+    if action == "start":
+        ok = room_watch.start(force=bool(payload.get("force")))
+        return {"ok": ok, "status": room_watch.status()}
+    if action == "stop":
+        room_watch.stop()
+        return {"ok": True, "status": room_watch.status()}
+    return JSONResponse({"error": "action must be 'start' or 'stop'"}, status_code=400)
+
+
+@app.get("/model")
+async def model_info():
+    """Which single model Kamil is running, and how it is fitted to this GPU."""
+    from core import model as _model
+    return _model.describe()
+
 
 @app.get("/vision/status")
 async def vision_status():

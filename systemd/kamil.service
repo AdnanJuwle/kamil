@@ -1,0 +1,31 @@
+[Unit]
+# Kamil's Python backend: FastAPI on :3000, the memory system, and the 24x7 room
+# watcher (it opens the camera in the lifespan hook and holds it for the session).
+Description=Kamil backend (FastAPI, memory, room watch)
+Documentation=file:%h/kamil/docs/FEDORA.md
+After=network.target kamil-llama.service
+Wants=kamil-llama.service
+
+[Service]
+Type=simple
+WorkingDirectory=%h/kamil
+Environment=PYTHONUNBUFFERED=1
+Environment=TRANSFORMERS_OFFLINE=1
+Environment=HF_DATASETS_OFFLINE=1
+# Kamil owns this machine. See docs/FEDORA.md before changing these two.
+Environment=KAMIL_SYSTEM_CONTROL=1
+Environment=KAMIL_ROOM_WATCH=1
+# Loopback only. The backend exposes shell and file tools; 127.0.0.1 plus the
+# per-launch API token is the whole trust boundary. Do not bind 0.0.0.0.
+Environment=KAMIL_BIND_HOST=127.0.0.1
+ExecStart=%h/kamil/venv313/bin/python3 run.py
+Restart=always
+RestartSec=10
+# Whisper + embeddings + Chroma load synchronously before uvicorn starts.
+TimeoutStartSec=600
+KillSignal=SIGINT
+StandardOutput=append:%h/kamil/data/logs/backend.log
+StandardError=append:%h/kamil/data/logs/backend.log
+
+[Install]
+WantedBy=default.target

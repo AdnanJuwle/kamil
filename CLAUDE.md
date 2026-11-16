@@ -39,6 +39,16 @@ C:\kamil\venv313\Scripts\activate
 python run.py      # uvicorn on 0.0.0.0:3000
 ```
 
+### 4. Fedora / Linux
+```bash
+./scripts/install-fedora.sh     # dnf deps + venv313 + webcam check
+./scripts/build-llama-cpp.sh    # CURRENT llama.cpp (Huihui-Qwen3.8 needs arch 'qwen35')
+./start.sh                      # one model + backend
+./scripts/install-systemd.sh    # run at login, survive logout
+```
+See **`docs/FEDORA.md`** for the whole Linux story: paths, system control, the
+room watcher, and the public-repo rules.
+
 **Python: use `venv313` (Python 3.13).** Not `venv` (older, stale), and **not 3.14** — uvicorn + threading breaks on 3.14. The Electron app hard-codes `C:\kamil\venv313\Scripts\python.exe`.
 
 **Dependencies** are pinned in `requirements.txt` (curated, direct deps) with a
@@ -59,18 +69,39 @@ context_manager) and the sealed-succession crypto (seal, succession).
 
 ## Models & ports
 
-Models are `*.gguf` files in `C:\kamil\models\` (gitignored, large). Each role is a separate `llama-server` process. `llama-server.exe` is expected at `C:\llama.cpp\build\bin\llama-server.exe`.
+**Kamil runs ONE model.** `Huihui-Qwen3.8-27B-abliterated` (a `qwen35`-architecture
+27B) serves chat, voice AND vision. The old primary+voice pair and the separate
+vision tier are gone: the model is multimodal, so the same server that holds the
+conversation looks through the webcam.
 
-| Role | Port | Model (default) | Started by | Notes |
-|------|------|-----------------|-----------|-------|
-| **Primary** | 8080 | `deepseek-r1-distill-14b-q4` | Electron / start.bat | Main reasoning + the Council's "Analyst" |
-| **Council advocate** | 8081 | `dolphin-mistral-7b-q4` | `core/council_loader.py` on demand | Devil's advocate |
-| **Council synthesizer** | 8082 | `llama-3.1-8b-instruct-q4` | `core/council_loader.py` on demand | Final synthesis |
-| ~~Executor~~ | ~~8083~~ | — | — | **Retired 2026-06** (fed the old XML executor path; no longer spawned) |
-| **Voice** | 8084 | `gemma4-e4b-q4` | Electron (+30s) | Quick spoken replies + handoff decision |
-| **Heavy** | 8086 | — | (configured, currently unused) | `HEAVY_SERVER_URL` reserved |
+| Role | Port | Resolved by | Notes |
+|------|------|-------------|-------|
+| **The model** | 8080 | `core/model.py` | chat + voice + vision, one process |
+| Council advocate | 8081 | `core/council_loader.py` | on demand, devil's advocate |
+| Council synthesizer | 8082 | `core/council_loader.py` | on demand, final synthesis |
+| ~~Voice~~ | ~~8084~~ | — | **Retired** — the 27B answers directly, no handoff |
+| ~~Vision~~ | ~~8098~~ | `core/vision_tier.py` | only spawned if the primary is NOT multimodal |
+| Heavy | 8086 | `core/heavy_tier.py` | configured, on-demand coder tier |
 
-Ports/URLs are overridable via env vars read in `core/config.py` (`KAMIL_SERVER_URL`, `KAMIL_VOICE_URL`, `KAMIL_HEAVY_URL`, `KAMIL_TIMEOUT`, `KAMIL_TEMPERATURE`, `KAMIL_MAX_TOKENS`). Heartbeat: `KAMIL_HEARTBEAT` (0 to disable), `KAMIL_HEARTBEAT_SECONDS`. The `models/` dir holds several extra GGUFs (qwen-coder, qwen-32b, claude-distills) not wired into the default routing — they're available for experimentation.
+**`core/model.py` is the single source of truth** for which GGUF and which
+llama-server flags to use — the launchers (`start.sh`, `start.bat`, the systemd
+units, the Electron shell) all ask it rather than hard-coding anything:
+
+```bash
+python -m core.model              # resolved weights, projector, VRAM fit
+python -m core.model --serve-args # exact llama-server flags (via core/hwfit.py)
+python -m core.model --bin        # the llama-server binary for this OS
+```
+
+It needs **two** files in `models/`: the weights (e.g.
+`Huihui-Qwen3.8-27B-abliterated-Q4_K.gguf`, ~16.8 GB) and the vision projector
+`mmproj-model-bf16.gguf`. Projectors are model-specific; the resolver refuses a
+mismatched pairing and reports text-only rather than garbling every frame.
+
+**Paths and platform differences all resolve through `core/paths.py`** — the only
+module allowed to name a drive letter. A test fails the build if any other module
+does. Override with `KAMIL_ROOT`, `KAMIL_DATA_DIR`, `KAMIL_MODELS_DIR`,
+`KAMIL_PROJECTS_ROOT`, `KAMIL_LLAMA_SERVER`, `KAMIL_PYTHON`, `KAMIL_FFMPEG`.
 
 ## Architecture
 
@@ -96,6 +127,18 @@ Electron shell (C:\kamil-app)
 ```
 
 ### `core/` — orchestration
+- `paths.py` — **the one place that knows where Kamil lives and what OS it is on.**
+  Every absolute path and every platform branch (process kill, port freeing, shell,
+  webcam backend, "what counts as the OS") resolves here. No other module may name a
+  drive letter; `tests/test_paths.py` enforces that.
+- `model.py` — **the one model.** Resolves which GGUF to serve, pairs it with its
+  multimodal projector (strictly — a mismatched `mmproj` is refused), and computes the
+  llama-server flags via `hwfit`. The launchers all call it; nothing hard-codes a model.
+- `room_watch.py` — **the 24x7 webcam room monitor.** Owns the camera for the whole
+  session, differences frames against a running average to find motion, records a clip
+  per event to `data/room/`, logs it to `data/room_events.db`, and hands one keyframe to
+  the vision model so the log reads in words. `MotionDetector` is split out so the maths
+  is unit-tested offline with synthetic frames. Clips roll off after 14 days.
 - `orchestrator.py` — the brain. Owns history, builds the per-turn system prompt (`_build_messages`), and exposes the chat modes:
   - `chat` / `chat_stream` — normal conversation (streamed via SSE).
   - `chat_agent` — **agentic tool-use loop** (multi-step: call tool → see result → continue). Streams events; mutating tools pause for confirmation. See `actions/agent.py`. This is the one tool-use path.
@@ -134,6 +177,15 @@ This is what separates Kamil from a stateless chatbot. Treat it carefully.
 **One tool path.** (The older XML `dispatcher.py` system + its `filesystem.py`/`shell.py` backends and the `run_executor` executor-model path were retired in 2026-06.)
 - `tools.py` — **the canonical typed tool registry** (read_file, write_file, edit_file, list_directory, shell, search_files, create_task, system_info). Each tool has a permission (`auto` runs immediately, `confirm` needs approval). Guardrails: writes/edits are fenced to `KAMIL_WRITE_ROOTS` (default workspace + `repos/`); shell has a destructive-command denylist; `edit_file` is a surgical unique-snippet replace. `parse_tool_calls` is tolerant (```tool / ```json / bare JSON).
 - `agent.py` — **the agentic tool-use loop** (`iter_agent`). After each model turn it runs auto tools and feeds results back, so the model can read → edit → run-test across multiple steps. Pauses with `awaiting_confirmation` (resumable) the moment a mutating tool is requested. Pure/injectable — fully unit-tested offline with a fake model.
+- **System control** (Linux default, `KAMIL_SYSTEM_CONTROL`): on Fedora Kamil owns the
+  machine — the write-root fence lifts, sudo/systemd/packages are in reach, and shell may
+  edit files. What survives is a *destructive-command gate*: `rm -rf`, `dd`, `mkfs`,
+  `poweroff`, `userdel`, `git push --force` and friends are no longer refused but PAUSE
+  for approval (privilege wrappers like `sudo`/`env VAR=x` are stripped before deciding).
+  Three typed tools back it: `service_control`, `package_manager`, `process_control` —
+  read-only verbs run immediately, state-changing ones ask. Secret reads stay blocked in
+  both modes; that is a design guarantee, not part of the sandbox.
+- `room_history` tool — what the camera has seen, so "was anyone here?" is answerable.
 - `tasks.py` — SQLite task store (`data/tasks.db`), backing the `create_task` tool.
 - `emcp_client.py` — bridge to the eMCP server (`C:\kamil-app`, port 3001): turns raw MCP tool responses into typed, cross-linked context nodes injected into the prompt.
 
@@ -145,7 +197,7 @@ Single-file server: serves the UI (`index.html`), SSE chat endpoints (`/chat`, `
 ### Voice pipeline
 Whisper (`small`, CPU) for STT → speaker ID on the same audio → voice model for a fast reply or handoff → Kokoro ONNX TTS (`am_michael` voice, `voices/kokoro-v1.0.onnx`). `ffmpeg` is required on PATH for webm→wav conversion in enrollment/transcription.
 
-## Data layout (`data/`) — local state, not all gitignored
+## Data layout (`data/`) — local state, ALL gitignored
 
 | Path | What |
 |------|------|
@@ -158,16 +210,33 @@ Whisper (`small`, CPU) for STT → speaker ID on the same audio → voice model 
 | `drift_state.json`, `sanity_log.json` | drift monitor state |
 | `domain_books/`, `religious/` | source docs for the RAG indexes |
 | `projects/` | cached project scans/architecture |
+| `room/` | webcam clips from the room watcher (`.mp4`, 14-day retention) |
+| `room_events.db` | motion events + their model-written descriptions |
+| `logs/` | `llama.log`, `backend.log` (start.sh / systemd) |
 
-Some of this contains **personal data** — past commits (`64ce172`, `ac9ab25`) cleaned sensitive files out of tracking. Be careful what you add to git; check `.gitignore` before committing anything under `data/`.
+**All of `data/` is gitignored, and the repo is PUBLIC.** It holds identity,
+voiceprints, conversation history, drift metrics, indexed copies of private repos and
+webcam footage. None of it is ever committed.
+
+> `.gitignore` was once **corrupted** — a UTF-16 block pasted into the middle made git
+> treat the whole file as binary and silently ignore every rule, which is how
+> `kamil.key`, `data/identity.json` and `data/speakers.json` came to be tracked. They
+> have since been purged from history and the key rotated. Keep that file plain UTF-8:
+> `file .gitignore` must say `UTF-8 text`.
 
 ## Conventions & gotchas
 
 - **Offline is non-negotiable.** `TRANSFORMERS_OFFLINE=1` / `HF_DATASETS_OFFLINE=1` are set at the top of `app.py`. Don't add code that phones home.
 - **Identity lives in `prompts/system.md`.** Kamil has a deliberate personality (direct, low-filter, Islamic ethical default, treats the user as a peer/friend). When changing tone/behavior, edit the prompt — don't hard-code personality in Python. Voice mode has its own inline system prompt in `app.py::voice_chat`.
-- **Paths are hard-coded to `C:\kamil`** in many places (`run.py`, `thread_state.py`, `sanity.py`, model paths, the Electron shell). This is a single-machine personal system; don't assume portability without auditing the absolute paths.
+- **Paths are NOT hard-coded any more.** Everything goes through `core/paths.py`; a test
+  (`test_no_literal_windows_paths_in_source`) fails the build if a module names a drive
+  letter. When you need a path, ask that module — never write `C:\...` or a leading `/`,
+  and never join with `\` or `/` by hand.
+- **One model, resolved not hard-coded.** Ask `core/model.py` for the weights and flags.
+  `config.SINGLE_MODEL` is true when voice and reasoning share a server, which is the
+  normal case — code that used to orchestrate the two-stage voice handoff checks it.
 - **The orchestrator file has stale comments** (e.g. references to a removed "banter" system, a `# ... rest unchanged` note). Trust the code, not the comments.
-- **Two action systems and several chat modes** route differently — when a request misbehaves, first identify which endpoint/mode handled it (`/chat` vs `/chat_actions` vs `/chat_agentic` vs `/voice_chat`).
+- **Several chat modes** route differently — when a request misbehaves, first identify which endpoint/mode handled it (`/chat` vs `/chat_actions` vs `/chat_agentic` vs `/voice_chat`).
 - **Tests live in `tests/`** (pytest, offline — see the Tests section above). The old ad-hoc `test_*.py` scripts at the repo root (`test_client.py`, `test_indexer.py`, `test_parser.py`) and `test_*.wav` fixtures are scratch, not part of the suite. **Run `python -m pytest` after changing memory/drift or succession logic.**
 - **Council loading is heavy** (spawns two more 4–8B models, ~120s cold start). It's on-demand and stays warm for consecutive deliberations, then an idle timer in `council_loader.py` frees the VRAM after `KAMIL_COUNCIL_IDLE` seconds (default 600). `atexit` also unloads it on backend shutdown.
 
@@ -197,9 +266,35 @@ Removed `actions/dispatcher.py`, `filesystem.py`, `shell.py`, `run_executor`,
 endpoints, the dead UI confirm path, and the executor model (Electron no longer
 spawns port 8083). `EXECUTOR_SERVER_URL` dropped from config.
 
+**Cross-platform + single model + room watch — DONE (2026-11):**
+- ✅ `core/paths.py` — every absolute path and platform branch resolves through one
+  module. ~50 hard-coded `C:\` sites ported; a test fails the build on any new one.
+  Fixed three real bugs this exposed (the project-scan cache dir in `indexer.py` and
+  `symbol_indexer.py`, and `_self_source_context`'s root, all pinned to `C:\kamil`).
+- ✅ One model (`core/model.py`): `Huihui-Qwen3.8-27B-abliterated` serves chat, voice
+  and vision. Voice handoff retired (`config.SINGLE_MODEL`); `vision_tier` short-circuits
+  to the primary when it is multimodal, so nothing extra is spawned. Strict `mmproj`
+  pairing — a projector from another model/size is refused rather than trusted.
+- ✅ Full system control on Linux with a destructive-command gate; `service_control`,
+  `package_manager`, `process_control` tools.
+- ✅ `core/room_watch.py` — 24x7 webcam monitoring, motion-triggered clips, model-written
+  descriptions, 14-day retention. Owns the camera so `look` still works.
+- ✅ Fedora path: `scripts/install-fedora.sh`, `scripts/build-llama-cpp.sh`,
+  `scripts/install-systemd.sh`, `systemd/*.service`, `start.sh`, `docs/FEDORA.md`.
+- ✅ Electron shell made cross-platform; it no longer serves llama on `0.0.0.0`.
+- ✅ Test suite 135 → 252, all offline. New: `test_paths.py`, `test_model.py`,
+  `test_room_watch.py`, `test_system_control.py`.
+- ✅ Public-repo cleanup: `.gitignore` de-corrupted; the private key, voiceprints,
+  identity, thread history and copyrighted books purged from all history.
+
 **Rough edges / still outstanding:**
 1. **`_agent_runs` is in-memory** — a paused agent run is lost if the backend restarts before approval (acceptable; runs are short-lived).
-2. **Hard-coded `C:\kamil` paths** throughout — fine for the single machine, but fragile.
+2. **`requirements.lock.txt` was frozen on Windows** — `install-fedora.sh` falls back to
+   `requirements.txt` when it will not resolve on Linux. A Linux lock file is worth adding.
 3. **Dead/unused config** — `HEAVY_SERVER_URL` (8086), the older `venv`, several unrouted GGUFs.
+4. **The destructive-command gate is a heuristic** over command text, not a security
+   boundary. It stops accidents, not determined mistakes — scope passwordless sudo narrowly.
+5. **Room clips are unencrypted** `.mp4` on disk. Put `data/` on an encrypted filesystem
+   if that matters, and tell anyone else who uses the room that the camera is on.
 
 When in doubt about hardware/model specifics or the intended behavior, the git history (`git log`) is descriptive and the `*.md` design docs at the repo root (`PROJECT_SUMMARY.md`, `CONTEXT_MANAGER_INTEGRATION.md`, `BUILD_REPORT.md`, etc.) capture the design intent — though some predate the current code and may have drifted.

@@ -2,7 +2,7 @@
 from models.client import LlamaClient
 from core.config import (
     KAMIL_SYSTEM_PROMPT, DEFAULT_TEMPERATURE, DEFAULT_MAX_TOKENS,
-    LLAMA_SERVER_URL, VOICE_SERVER_URL, PROJECTS_ROOT
+    LLAMA_SERVER_URL, VOICE_SERVER_URL, PROJECTS_ROOT, SINGLE_MODEL
 )
 from memory.store import save_history, load_history, clear_history, save_setting, load_setting
 from memory.identity import load_identity, is_new_user, update_identity
@@ -16,6 +16,12 @@ import json
 import re
 import os
 from context.religious_indexer import query_religious, is_religious_query
+from core.paths import KAMIL_ROOT as _KAMIL_ROOT, display as _display
+
+# Kamil's own source root, written the way THIS OS writes it. The prompt used to
+# say "C:\kamil" literally, which on Fedora sent the model hunting for a path that
+# does not exist — and it would then crawl looking for itself.
+_KAMIL_ROOT_DISPLAY = _display(_KAMIL_ROOT)
 import sys
 import io
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
@@ -183,7 +189,7 @@ class Orchestrator:
             "## AGENT MODE\nYou can use tools across multiple steps. Available tools:\n"
             + get_tools_for_prompt()
             + "\n\nTo call a tool, output a fenced block exactly like:\n"
-            '```tool\n{"tool": "read_file", "params": {"path": "C:\\\\path\\\\file.py"}}\n```\n'
+            '```tool\n{"tool": "read_file", "params": {"path": "<absolute path>"}}\n```\n'
             "After each tool runs you will see its result, then call more tools or give your "
             "final answer with NO tool block. Prefer edit_file over write_file for existing files.\n"
             "Work autonomously: edit_file/write_file/shell run automatically inside the "
@@ -218,7 +224,7 @@ class Orchestrator:
             "PROJECT FIRST: if the task edits or creates files in a project and NO project is "
             "loaded (no Project directory shown below), your FIRST tool call is list_projects, "
             "then open_project with the right name — BEFORE any write_file/edit_file/shell. Never "
-            "guess or invent a path (e.g. C:\\Users\\...\\SomeProject) and never write to a scratch "
+            "guess or invent a path (e.g. some made-up SomeProject directory) and never write to a scratch "
             "folder as a substitute; if a write is refused for being outside the project, open the "
             "correct project and retry inside it. Once a project is loaded, writes are confined to "
             "its directory.\n"
@@ -247,11 +253,11 @@ class Orchestrator:
             "alternative at most, then STOP and tell the user you couldn't find it (name what you "
             "looked for). Do NOT crawl the whole project directory-by-directory — a wrong or "
             "misheard name is common; say so quickly instead of searching everywhere.\n"
-            "YOUR OWN SOURCE: you (Kamil) are a Python/FastAPI system at C:\\kamil. When asked "
-            "about your own code/source/architecture, READ files under C:\\kamil (core\\, actions\\, "
-            "interfaces\\, models\\) — that's the real you. It is NOT Kamil_v1/Kamil_v2 in "
-            "Documents\\repos (those are scratch projects). You can read your own code but not "
-            "modify it; code13\\ is sealed. Never invent a 'get_code' tool — just read the files.\n"
+            f"YOUR OWN SOURCE: you (Kamil) are a Python/FastAPI system at {_KAMIL_ROOT_DISPLAY}. When asked "
+            f"about your own code/source/architecture, READ files under {_KAMIL_ROOT_DISPLAY} (core, actions, "
+            "interfaces, models) — that's the real you. It is NOT Kamil_v1/Kamil_v2 under the "
+            "projects root (those are scratch projects). You can read your own code but not "
+            "modify it; code13 is sealed. Never invent a 'get_code' tool — just read the files.\n"
             "SKILLS: if any LEARNED SKILLS are shown below, follow that procedure. When you work "
             "out how to do a recurring task (or Adnan says 'remember how to do this'), call "
             "learn_skill to save it so you don't relearn it next time.\n"
@@ -315,7 +321,7 @@ class Orchestrator:
 
     def _asks_about_own_source(self, text: str) -> bool:
         """True when Adnan is asking about KAMIL'S OWN code/source/architecture (which
-        lives at C:\\kamil), not about a project in Documents\\repos."""
+        lives at KAMIL_ROOT), not about a project under the projects root."""
         t = (text or "").lower()
         # direct "how are/were you built/made/designed" style self-inquiries
         if any(p in t for p in (
@@ -332,11 +338,12 @@ class Orchestrator:
 
     def _self_source_context(self, user_message: str) -> str:
         """Point the agent at Kamil's OWN source (read-only) when asked about itself."""
-        root = "C:\\kamil"
+        from core.paths import KAMIL_ROOT, display
+        root = display(KAMIL_ROOT)
         return (
             "## YOUR OWN SOURCE\n"
             f"You (Kamil) are a local Python/FastAPI system whose source lives at {root}. "
-            "This is literally YOU — not a project in Documents\\repos (Kamil_v1 / Kamil_v2 are "
+            "This is literally YOU — not a project under the projects root (Kamil_v1 / Kamil_v2 are "
             "unrelated scratch projects, NOT your code). To answer questions about yourself or "
             "suggest improvements, READ your real files:\n"
             "  - core\\        orchestrator, memory, model tiers, config\n"
@@ -562,6 +569,21 @@ class Orchestrator:
         system += "\nIf Adnan is chatting during a deep work block, gently acknowledge it. Don't lecture, just be aware."
         system += "\nWhen mentioning schedule — be direct, no motivational padding, no 'optimal productivity' language."
 
+        # What the camera has seen. Kamil watches the room continuously, so recent
+        # motion is part of knowing the situation — who's around, what happened while
+        # Adnan was away. Kept short (a handful of lines); room_history pulls more.
+        try:
+            from core import room_watch
+            if room_watch.is_running():
+                room_ctx = room_watch.summary(hours=int(os.getenv("KAMIL_ROOM_PROMPT_HOURS", "8")))
+                if room_ctx:
+                    system += f"\n\n## THE ROOM\n{room_ctx}"
+                    system += ("\nThis is your own camera. Mention it only when it's "
+                               "relevant to what Adnan asked — don't narrate the room "
+                               "unprompted. Use the room_history tool for more.")
+        except Exception:
+            pass
+
         # Temporal continuity: note how long since Adnan last spoke, then stamp this
         # interaction so the heartbeat knows he's present.
         try:
@@ -759,7 +781,7 @@ class Orchestrator:
             # A question about Kamil's OWN code points at C:\kamil, not a repos project.
             own_source = self._asks_about_own_source(user_message) and not mentioned
             if own_source:
-                print("[orchestrator] self-source question — pointing at C:\\kamil (read-only)")
+                print(f"[orchestrator] self-source question — pointing at {_KAMIL_ROOT_DISPLAY} (read-only)")
             elif mentioned and mentioned != self.indexer.current_project:
                 print(f"[orchestrator] Project named: {mentioned} — auto-switching (agent)")
                 self.open_project(mentioned)
@@ -1114,12 +1136,20 @@ When the user says 'create a file' without specifying location, create it in the
         messages = [{"role": "system", "content": system}] + trimmed_history
         messages.append({"role": "user", "content": user_message})
 
-        try:
-            quick_response = self.voice_client.chat(messages, max_tokens=60, temperature=0.3)
-        except RuntimeError:
-            quick_response = "let me check that for you"
-
-        is_handoff = any(phrase in quick_response.lower() for phrase in VOICE_HANDOFF_PHRASES)
+        # Single-model setup: voice and reasoning are the same weights, so the old
+        # two-phase "quick reply or hand off to the big model" dance would just call
+        # the same server twice and pay the prompt cost twice. Go straight to the
+        # full, context-rich answer.
+        if SINGLE_MODEL:
+            is_handoff = True
+            quick_response = ""
+        else:
+            try:
+                quick_response = self.voice_client.chat(messages, max_tokens=60, temperature=0.3)
+            except RuntimeError:
+                quick_response = "let me check that for you"
+            is_handoff = any(phrase in quick_response.lower()
+                             for phrase in VOICE_HANDOFF_PHRASES)
 
         if not is_handoff:
             self.history.append({"role": "user", "content": user_message})
@@ -1128,7 +1158,8 @@ When the user says 'create a file' without specifying location, create it in the
             yield {"phase": "final", "text": quick_response}
             return
 
-        yield {"phase": "handoff", "text": quick_response}
+        if quick_response:
+            yield {"phase": "handoff", "text": quick_response}
 
         full_messages = self._build_messages(user_message)
         full_messages[0]["content"] += "\n\nIMPORTANT: This is a voice response. Keep your answer under 4 sentences. Be direct and spoken — no bullet points, no markdown, no lists."

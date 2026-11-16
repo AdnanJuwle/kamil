@@ -18,7 +18,8 @@ from datetime import datetime
 from dataclasses import dataclass, asdict, field
 from typing import Optional
 
-THREAD_STATE_PATH = r"C:\kamil\data\active_thread.json"
+from core.paths import data_path
+THREAD_STATE_PATH = data_path("active_thread.json")
 
 # Thread types — determines context injection strategy
 THREAD_TYPES = {
@@ -258,7 +259,7 @@ def close_thread():
     state = load_thread_state()
     
     # Archive to data/threads_archive/
-    archive_dir = r"C:\kamil\data\threads_archive"
+    archive_dir = data_path("threads_archive")
     os.makedirs(archive_dir, exist_ok=True)
     archive_path = os.path.join(archive_dir, f"{state.thread_id}.json")
     with open(archive_path, "w", encoding="utf-8") as f:

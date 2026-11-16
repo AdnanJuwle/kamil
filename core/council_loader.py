@@ -5,14 +5,15 @@ import atexit
 import os
 import httpx
 
-LLAMA_SERVER = r"C:\llama.cpp\build\bin\llama-server.exe"
+from core.paths import llama_server_bin, model_path
+LLAMA_SERVER = llama_server_bin()
 MODELS = {
     "advocate": {
-        "path": r"C:\kamil\models\dolphin-mistral-7b-q4.gguf",
+        "path": model_path("dolphin-mistral-7b-q4.gguf"),
         "port": 8081
     },
     "synthesizer": {
-        "path": r"C:\kamil\models\llama-3.1-8b-instruct-q4.gguf",
+        "path": model_path("llama-3.1-8b-instruct-q4.gguf"),
         "port": 8082
     }
 }
