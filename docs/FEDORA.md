@@ -272,6 +272,34 @@ private repos, and webcam footage. The same goes for `models/*.gguf`,
 > That is how `kamil.key`, `data/identity.json` and `data/speakers.json` ended up
 > tracked. Keep that file plain UTF-8 — `file .gitignore` should say `UTF-8 text`.
 
+### The TLS pair
+
+`kamil.key` / `kamil.crt` were committed while the repo was public, so that key is
+compromised. It has been replaced:
+
+```bash
+./scripts/make-cert.sh              # loopback pair (localhost, 127.0.0.1, ::1), 2 years
+HOSTS="localhost,kamil.local" ./scripts/make-cert.sh
+```
+
+The old cert was `CN=192.168.1.7` — a LAN IP, from when Kamil served HTTPS to other
+devices on the network. The replacement is deliberately **loopback-only**, matching
+the current trust boundary rather than rebuilding the old exposure. (That old cert
+also published your LAN address, which is minor but was avoidable.)
+
+Note that **nothing currently loads either file** — `uvicorn.run` takes no `ssl_*`
+arguments, so Kamil speaks plain HTTP on 127.0.0.1. The pair is precautionary. To
+actually serve HTTPS:
+
+```python
+uvicorn.run(app, host=host, port=port,
+            ssl_keyfile="kamil.key", ssl_certfile="kamil.crt")
+```
+
+`.gitignore` excludes `*.key`, `*.crt` **and `*.replaced-*`** — that last one
+matters, because a rotation backup named `kamil.key.replaced-20261116` slips past
+`*.key` and would leave a retired private key one `git add -A` from a public push.
+
 **`run.py` binds loopback only** and the backend requires `KAMIL_API_TOKEN`.
 127.0.0.1 is not a trust boundary on a shared machine, and the backend exposes
 shell and file tools with system control on. Do not set `KAMIL_BIND_HOST=0.0.0.0`.

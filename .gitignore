@@ -51,6 +51,12 @@ venv.bak/
 id_rsa*
 credentials*
 secrets.*
+# Retired key/cert material. *.key would miss a name like
+# "kamil.key.replaced-20261116", so exclude the whole shape too -- a rotated
+# private key must never be one `git add -A` away from a public push.
+*.replaced-*
+*.bak
+*.old
 
 # ── Local state: everything Kamil knows ────────────────────────────
 # All of data/ is machine-local. It holds identity, voiceprints, conversation
